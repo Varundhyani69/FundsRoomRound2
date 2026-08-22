@@ -14,6 +14,7 @@ const referenceRoutes = require('./reference.routes');
 const inventoryRoutes = require('./inventory.routes');
 const workOrderRoutes = require('./workOrder.routes');
 const transferRoutes = require('./transfer.routes');
+const orderRoutes = require('./order.routes');
 
 const router = express.Router();
 
@@ -34,7 +35,6 @@ router.use('/users', authenticate, referenceRoutes.users);
 router.use('/inventory', authenticate, inventoryRoutes);
 router.use('/work-orders', authenticate, workOrderRoutes);
 router.use('/transfers', authenticate, transferRoutes);
-
-// The router for orders is added in its own increment.
+router.use('/orders', authenticate, orderRoutes);
 
 module.exports = router;

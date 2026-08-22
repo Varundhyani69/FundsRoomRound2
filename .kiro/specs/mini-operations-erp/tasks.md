@@ -288,7 +288,7 @@ Scope discipline: no file, function, or abstraction beyond what design.md names.
     - `git commit -m "Add work orders with read-time material shortage calculation"`, then `git push`
     - _Requirements: 14.1, 14.2, 14.7_
 
-- [ ] 7. Internal stock transfers
+- [x] 7. Internal stock transfers
   - [x] 7.1 Create the InternalTransfer model
     - `backend/src/models/InternalTransfer.js` — `item`, trimmed `batch`, `sourceLocation`, `destinationLocation`, `quantity` (`validQuantity`), `receivedQuantity` bounded by `quantity`, `status` enum defaulting to `Requested`, nullable `dispatchedAt` and `receivedAt`, indexes `{ status }` and `{ item, sourceLocation, batch }`
     - _Requirements: 6.1, 15.2_
@@ -330,42 +330,42 @@ Scope discipline: no file, function, or abstraction beyond what design.md names.
     - **Property 11: Receipt is idempotent and received quantity stays bounded**
     - **Validates: Requirements 6.9, 6.12, 15.2**
 
-  - [-] 7.11 Run the suite, commit, and push increment 7
+  - [x] 7.11 Run the suite, commit, and push increment 7
     - Run `npm test`; commit only on exit 0
     - `git commit -m "Add internal transfers with dispatch and receipt lifecycle"`, then `git push`
     - _Requirements: 14.1, 14.2, 14.7_
 
 - [ ] 8. Customer orders and stock reservation
-  - [ ] 8.1 Create the CustomerOrder model
+  - [x] 8.1 Create the CustomerOrder model
     - `backend/src/models/CustomerOrder.js` — embedded `reservationEntrySchema` (`item`, `location`, `batch`, `quantity`, `_id: false`), `customerName` 1..120 trimmed, `item`, `location`, `quantity`, `status` enum defaulting to `Reserved`, `reservations` validated to hold 1..20 entries, `createdBy`, indexes `{ item, location }` and `{ status }`
     - _Requirements: 7.1, 7.11, 15.3_
 
-  - [ ] 8.2 Implement the order service
+  - [x] 8.2 Implement the order service
     - `backend/src/services/order.service.js` — `createOrder` inside `withTransaction` with existence checks (`INVALID_REFERENCE`), and `reserveAcrossBatches` scanning records for the item and location sorted `{ batch: 1 }`, taking `min(remaining, availableQuantity(record))`, applying each increment through `updateOne` whose filter carries `hasAvailableAtLeastExpr(take)`, deciding on `matchedCount === 1`, writing one ledger row per changed record with `reserveMovementReference(orderId, recordId)`, and throwing `INSUFFICIENT_AVAILABLE_QUANTITY` when a filter misses or `remaining > 0` at the end; `getOrder`/`listOrders` with `NOT_FOUND`
     - _Requirements: 7.1, 7.2, 7.3, 7.4, 7.10, 7.12, 15.3, 15.5, 15.6_
 
-  - [ ] 8.3 Add the order validation schemas
+  - [x] 8.3 Add the order validation schemas
     - `backend/src/validation/order.schemas.js` — strict creation body (`customerName`, `item`, `location`, `quantity`), `objectId` path param, list query filter
     - _Requirements: 7.9, 7.11, 9.2, 9.10_
 
-  - [ ] 8.4 Wire the order routes
+  - [x] 8.4 Wire the order routes
     - `backend/src/controllers/order.controller.js` and `backend/src/routes/order.routes.js` — `GET /api/orders`, `GET /api/orders/:id`, `POST /api/orders`; mount in `backend/src/routes/index.js`
     - _Requirements: 2.6, 2.7, 7.1_
 
-  - [ ] 8.5 Write mandatory test 1: reservation above availability
+  - [x] 8.5 Write mandatory test 1: reservation above availability
     - `backend/tests/orders.test.js` — a creation request for a quantity above the location availability returns 409 `INSUFFICIENT_AVAILABLE_QUANTITY`, no Customer_Order document exists for it, and the reserved quantity of every affected record equals the value read immediately before; issued over HTTP
     - _Requirements: 7.3, 12.1, 12.13_
 
-  - [ ]* 8.6 Write unit tests for reservation allocation
+  - [x]* 8.6 Write unit tests for reservation allocation
     - Extend `backend/tests/orders.test.js` — reserve 60 of 100 → physical 100 / reserved 60 / available 40, multi-batch allocation in ascending batch order with one ledger row per changed record, unknown references, blank customer name, invalid quantity, unmatched order id
     - _Requirements: 7.1, 7.2, 7.9, 7.10, 7.11, 7.12_
 
-  - [ ]* 8.7 Write property test for reservation completeness
+  - [x]* 8.7 Write property test for reservation completeness
     - `backend/tests/properties/orders.pbt.test.js`
     - **Property 12: A reservation exactly covers its order, in ascending batch order**
     - **Validates: Requirements 7.1, 7.3, 15.3, 15.6**
 
-  - [ ] 8.8 Run the suite, commit, and push increment 8
+  - [-] 8.8 Run the suite, commit, and push increment 8
     - Run `npm test`; commit only on exit 0
     - `git commit -m "Add customer orders with ascending-batch stock reservation"`, then `git push`
     - _Requirements: 14.1, 14.2, 14.7_
