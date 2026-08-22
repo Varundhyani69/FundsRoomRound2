@@ -108,27 +108,27 @@ Scope discipline: no file, function, or abstraction beyond what design.md names.
     - `backend/tests/auth.test.js` — login success payload excluding `passwordHash`, bcrypt hash format and cost band, JWT claims and 8-hour expiry, identical rejection shape for both failure modes, and the four token states against a protected route
     - _Requirements: 1.1, 1.2, 1.3, 1.4, 1.5, 1.6, 1.7, 1.8, 1.9, 1.11_
 
-  - [-] 2.8 Run the suite, commit, and push increment 2
+  - [x] 2.8 Run the suite, commit, and push increment 2
     - Run `npm test`; commit only on exit 0
     - `git commit -m "Add authentication with bcrypt hashing and JWT verification"`, then `git push`
     - _Requirements: 14.1, 14.2, 14.7_
 
 - [ ] 3. Authorization
-  - [~] 3.1 Create the single route-to-role permission map
+  - [x] 3.1 Create the single route-to-role permission map
     - `backend/src/permissions.js` — `ROLES` and `WRITE_ROUTE_PERMISSIONS` keyed `"<METHOD> <mounted path>"`, containing every write route of the design's API surface including `PATCH /api/work-orders/:id/status`
     - _Requirements: 2.8, 2.14_
 
-  - [~] 3.2 Implement the authorize middleware
+  - [x] 3.2 Implement the authorize middleware
     - `backend/src/middleware/authorize.js` — role-enum check first, reads pass for any valid role, write routes looked up by `${req.method} ${req.baseUrl}${req.route.path}`, deny-by-default `FORBIDDEN` for unmapped write routes
     - Attach it per route (not app-wide) so `req.route.path` is populated; document that pattern in a one-line comment
     - _Requirements: 2.1, 2.2, 2.3, 2.4, 2.5, 2.6, 2.7, 2.11, 2.12, 2.13_
 
-  - [ ]* 3.3 Write unit tests for authorize and the permission map
+  - [x]* 3.3 Write unit tests for authorize and the permission map
     - `backend/tests/authorization.test.js` — role × route matrix over `authenticate` + `authorize` mounted on stub write routes in a test-only app (`backend/tests/setup/authorizeTestApp.js`), unknown-role and unmapped-route denial, and a completeness assertion that every write route the real app declares has exactly one entry in `WRITE_ROUTE_PERMISSIONS`
     - Note: mandatory test 5 needs a real restricted write route with a targeted document, so it is added to this same file in task 5.12, as soon as `POST /api/inventory` exists
     - _Requirements: 2.1, 2.3, 2.5, 2.7, 2.8, 2.11, 2.12, 2.13, 2.14_
 
-  - [~] 3.4 Run the suite, commit, and push increment 3
+  - [-] 3.4 Run the suite, commit, and push increment 3
     - Run `npm test`; commit only on exit 0
     - `git commit -m "Add role-based authorization with a single write-route permission map"`, then `git push`
     - _Requirements: 14.1, 14.2, 14.7_

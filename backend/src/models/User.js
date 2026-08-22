@@ -7,7 +7,10 @@
 
 const mongoose = require('mongoose');
 
-const ROLES = ['Admin', 'OperationsUser', 'SalesUser'];
+// The Role set lives in src/permissions.js, which is also what the authorize
+// middleware checks against, so the schema enum and the authorization check can
+// never drift apart (Req 2.8, 2.12).
+const { ROLES } = require('../permissions');
 
 const userSchema = new mongoose.Schema(
     {
