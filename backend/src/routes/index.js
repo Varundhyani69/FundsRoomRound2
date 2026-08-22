@@ -12,6 +12,7 @@ const authenticate = require('../middleware/authenticate');
 const authRoutes = require('./auth.routes');
 const referenceRoutes = require('./reference.routes');
 const inventoryRoutes = require('./inventory.routes');
+const workOrderRoutes = require('./workOrder.routes');
 
 const router = express.Router();
 
@@ -30,8 +31,8 @@ router.use('/users', authenticate, referenceRoutes.users);
 // for any unmatched /api path too, and Req 9.12 wants those to reach notFound and
 // return 404 ROUTE_NOT_FOUND. Attaching it per mount keeps both true.
 router.use('/inventory', authenticate, inventoryRoutes);
+router.use('/work-orders', authenticate, workOrderRoutes);
 
-// Routers for work orders, transfers and orders are added in their own
-// increments.
+// Routers for transfers and orders are added in their own increments.
 
 module.exports = router;

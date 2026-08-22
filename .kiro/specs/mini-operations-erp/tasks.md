@@ -161,7 +161,7 @@ Scope discipline: no file, function, or abstraction beyond what design.md names.
     - `git commit -m "Add category, item and location reference data with seed script"`, then `git push`
     - _Requirements: 14.1, 14.2, 14.7_
 
-- [ ] 5. Inventory core: availability, transactions, records, and ledger
+- [x] 5. Inventory core: availability, transactions, records, and ledger
   - [x] 5.1 Create the shared field helpers and the InventoryRecord model
     - `backend/src/models/fields.js` — `nonNegativeCount` (integer 0..999,999,999) and `validQuantity` (integer 1..1,000,000)
     - `backend/src/models/InventoryRecord.js` — `item`, `location`, trimmed `batch` 1..32, `physicalQuantity`, `reservedQuantity`, an `availableQuantity` virtual that delegates to `availableQuantity(record)`, and no stored available field
@@ -244,46 +244,46 @@ Scope discipline: no file, function, or abstraction beyond what design.md names.
     - **Property 7: Invalid quantities are rejected identically everywhere**
     - **Validates: Requirements 4.1, 5.2, 6.13, 7.9**
 
-  - [-] 5.20 Run the suite, commit, and push increment 5
+  - [x] 5.20 Run the suite, commit, and push increment 5
     - Run `npm test`; commit only on exit 0
     - `git commit -m "Add inventory records, derived availability and transactional ledger"`, then `git push`
     - _Requirements: 14.1, 14.2, 14.7_
 
 - [ ] 6. Work orders and derived shortage
-  - [ ] 6.1 Create the WorkOrder model
+  - [x] 6.1 Create the WorkOrder model
     - `backend/src/models/WorkOrder.js` — `location`, `item`, `requiredQuantity` (`validQuantity`), `assignedUser`, `status` enum defaulting to `Assigned`, nullable `statusChangedAt`, `createdBy`, indexes `{ item, location }` and `{ status }`, and no stored shortage field
     - _Requirements: 5.1, 5.4_
 
-  - [ ] 6.2 Implement the work order service
+  - [x] 6.2 Implement the work order service
     - `backend/src/services/workOrder.service.js` — `createWorkOrder` (existence checks → `INVALID_REFERENCE`, status `Assigned`), `listWorkOrders` and `getWorkOrder` computing `locationAvailableQuantity` and `shortageQuantity = max(0, required - available)` at read time via `availability.js`, `NOT_FOUND` on unmatched ids, and the named guard `nextWorkOrderStatus` used by `changeStatus` to record `statusChangedAt` or throw `INVALID_STATUS_TRANSITION`
     - _Requirements: 5.1, 5.3, 5.4, 5.5, 5.6, 5.7, 5.8, 5.9, 5.10, 5.12, 15.5_
 
-  - [ ] 6.3 Add the work order validation schemas
+  - [x] 6.3 Add the work order validation schemas
     - `backend/src/validation/workOrder.schemas.js` — strict creation body, status-change body limited to the three enum values, `objectId` path params, list query filters
     - _Requirements: 5.2, 5.11, 9.2, 9.10_
 
-  - [ ] 6.4 Wire the work order routes
+  - [x] 6.4 Wire the work order routes
     - `backend/src/controllers/workOrder.controller.js` and `backend/src/routes/workOrder.routes.js` — `GET /api/work-orders`, `GET /api/work-orders/:id`, `POST /api/work-orders` (Admin), `PATCH /api/work-orders/:id/status`; mount in `backend/src/routes/index.js` and confirm both write routes resolve against `WRITE_ROUTE_PERMISSIONS`
     - _Requirements: 2.2, 2.3, 2.14, 5.1, 5.7_
 
-  - [ ] 6.5 Extend the seed script with a shortage work order
+  - [x] 6.5 Extend the seed script with a shortage work order
     - `backend/scripts/seed.js` — add at least one Work_Order whose `requiredQuantity` exceeds the Location_Available_Quantity of its item at its location, so a non-zero shortage is observable
     - _Requirements: 13.5_
 
-  - [ ]* 6.6 Write unit tests for work orders
+  - [x]* 6.6 Write unit tests for work orders
     - `backend/tests/workOrders.test.js` — 201 payload with shortage, required 100 vs available 60 → 40, surplus → 0, accepted and rejected transitions, `NOT_FOUND`, out-of-enum status → `VALIDATION_ERROR`
     - _Requirements: 5.1, 5.5, 5.6, 5.7, 5.9, 5.11, 5.12_
 
-  - [ ]* 6.7 Write property test for shortage derivation
+  - [x]* 6.7 Write property test for shortage derivation
     - `backend/tests/properties/workOrders.pbt.test.js`
     - **Property 8: Work order shortage is derived and bounded**
     - **Validates: Requirements 5.1, 5.4, 5.6, 5.10**
 
-  - [ ]* 6.8 Write property test for guarded status transitions
+  - [x]* 6.8 Write property test for guarded status transitions
     - **Property 9: A status change is accepted exactly when it is the successor**
     - **Validates: Requirements 5.7, 5.9, 5.11, 6.5, 6.10**
 
-  - [ ] 6.9 Run the suite, commit, and push increment 6
+  - [-] 6.9 Run the suite, commit, and push increment 6
     - Run `npm test`; commit only on exit 0
     - `git commit -m "Add work orders with read-time material shortage calculation"`, then `git push`
     - _Requirements: 14.1, 14.2, 14.7_

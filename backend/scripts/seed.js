@@ -14,20 +14,27 @@
 // rather than duplicating them or erroring on the unique indexes. Inventory_Records are
 // idempotent the same way but by a find-before-create check on their own unique key ({ item,
 // location, batch }), since creating one always writes an opening ledger row and an upsert
-// would either skip that row on a second run or write a second one. Nothing is deleted, so a
-// database that already carries other data keeps it. Re-running does reset the password of
-// each seeded User to the value currently in the environment.
+// would either skip that row on a second run or write a second one. Work_Orders are
+// idempotent the same way: WorkOrder has no unique index (a site can legitimately have many
+// work orders against the same item), so the find-before-create check below matches on
+// { item, location, assignedUser, requiredQuantity } -- the same four fields the seed data
+// declares -- which is specific enough that re-running the seed with the same
+// SEED_WORK_ORDERS entry finds the one it already created instead of adding a duplicate.
+// Nothing is deleted, so a database that already carries other data keeps it. Re-running
+// does reset the password of each seeded User to the value currently in the environment.
 
 const config = require('../src/config'); // loads .env and validates MONGODB_URI first
 const { connect, disconnect } = require('../src/db/connect');
 const { hashPassword } = require('../src/services/auth.service');
 const { createInventoryRecord } = require('../src/services/inventory.service');
+const { createWorkOrder } = require('../src/services/workOrder.service');
 
 const User = require('../src/models/User');
 const Category = require('../src/models/Category');
 const Item = require('../src/models/Item');
 const Location = require('../src/models/Location');
 const InventoryRecord = require('../src/models/InventoryRecord');
+const WorkOrder = require('../src/models/WorkOrder');
 
 // bcrypt only consumes the first 72 bytes of a password, and the login schema rejects
 // anything longer, so a longer seed password would silently not be the password that works.
@@ -55,6 +62,20 @@ const SEED_ITEMS = [
 // transfer's receipt step is what creates one, which is exactly the case Req 6.8 covers.
 const SEED_INVENTORY_RECORDS = [
     { itemCode: 'ITM-1001', locationCode: 'WH-MAIN', batch: 'BATCH-001', physicalQuantity: 50 },
+];
+
+// A Work_Order whose requiredQuantity (80) exceeds ITM-1001's Location_Available_Quantity at
+// WH-MAIN (50, from SEED_INVENTORY_RECORDS above, with no reservations against it), so a
+// reviewer who reads this Work_Order back sees a non-zero Shortage_Quantity of 30 without
+// having to create anything by hand (Req 13.5). Assigned to the seeded OperationsUser, who
+// is already tied to WH-MAIN.
+const SEED_WORK_ORDERS = [
+    {
+        itemCode: 'ITM-1001',
+        locationCode: 'WH-MAIN',
+        requiredQuantity: 80,
+        assignedUserRole: 'OperationsUser',
+    },
 ];
 
 // One User per Role. `passwordVar` names the environment variable the password comes from;
@@ -240,11 +261,59 @@ async function seedInventoryRecords(items, locations) {
 }
 
 /**
+ * At least one Work_Order whose requiredQuantity exceeds the Location_Available_Quantity of
+ * its item at its location, so a non-zero Shortage_Quantity is observable as soon as the
+ * seed script finishes (Req 13.5).
+ *
+ * `createWorkOrder` from the Work_Order_Service is reused rather than a direct
+ * `WorkOrder.create`, so the seeded row goes through the same existence checks and default
+ * Work_Order_Status every API-created Work_Order does. Idempotency is a find-before-create
+ * check on { item, location, assignedUser, requiredQuantity }, since WorkOrder carries no
+ * unique index for `upsertBy` to target.
+ */
+async function seedWorkOrders(items, locations, users) {
+    const workOrders = new Map();
+    const admin = users.get('Admin');
+
+    for (const { itemCode, locationCode, requiredQuantity, assignedUserRole } of SEED_WORK_ORDERS) {
+        const item = items.get(itemCode);
+        const location = locations.get(locationCode);
+        const assignedUser = users.get(assignedUserRole);
+        if (!item || !location || !assignedUser) {
+            throw new Error(
+                `Seed work order names item "${itemCode}", location "${locationCode}", or ` +
+                `assigned user role "${assignedUserRole}", which is not among the seeded ` +
+                'items, locations, or users.'
+            );
+        }
+
+        let workOrder = await WorkOrder.findOne({
+            item: item._id,
+            location: location._id,
+            assignedUser: assignedUser._id,
+            requiredQuantity,
+        });
+        if (!workOrder) {
+            workOrder = await createWorkOrder({
+                location: location._id,
+                item: item._id,
+                requiredQuantity,
+                assignedUser: assignedUser._id,
+                createdBy: admin._id,
+            });
+        }
+
+        workOrders.set(`${itemCode}:${locationCode}:${requiredQuantity}`, workOrder);
+    }
+
+    return workOrders;
+}
+
+/**
  * Load the whole seed dataset.
  *
  * The steps run in dependency order and each returns its documents keyed by business key,
- * so a later step can look an id up without querying again. Task 6.5 adds the Work_Order
- * step at the end of this function using `items`, `locations`, and `users`.
+ * so a later step can look an id up without querying again.
  *
  * @param {Record<string, string>} passwords validated seed passwords, keyed by variable name
  */
@@ -254,8 +323,9 @@ async function seed(passwords) {
     const items = await seedItems(categories);
     const users = await seedUsers(passwords, locations);
     const inventoryRecords = await seedInventoryRecords(items, locations);
+    const workOrders = await seedWorkOrders(items, locations, users);
 
-    return { locations, categories, items, users, inventoryRecords };
+    return { locations, categories, items, users, inventoryRecords, workOrders };
 }
 
 /** One line per seeded User: email, Role, and the variable its password came from. */
@@ -282,14 +352,15 @@ async function main() {
     await connect(config.mongoUri);
 
     try {
-        const { locations, categories, items, users, inventoryRecords } = await seed(
+        const { locations, categories, items, users, inventoryRecords, workOrders } = await seed(
             passwordCheck.passwords
         );
         reportUsers(users);
         console.log(
             `Seeded reference data: ${locations.size} location(s), ` +
             `${categories.size} category/categories, ${items.size} item(s), ` +
-            `${inventoryRecords.size} inventory record(s).`
+            `${inventoryRecords.size} inventory record(s), ` +
+            `${workOrders.size} work order(s).`
         );
         return 0;
     } finally {
