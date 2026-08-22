@@ -76,12 +76,12 @@ Scope discipline: no file, function, or abstraction beyond what design.md names.
     - `git add`, `git commit -m "Add project skeleton, config loader, error handling and test harness"`, `git push -u origin <default-branch>`
     - _Requirements: 14.1, 14.2, 14.7_
 
-- [ ] 2. Authentication
+- [x] 2. Authentication
   - [x] 2.1 Create the User model
     - `backend/src/models/User.js` — unique lowercase trimmed `email` (≤ 254), `passwordHash` with `select: false`, `role` enum, nullable `assignedLocation` ObjectId reference, timestamps
     - _Requirements: 1.1, 1.5, 15.4_
 
-  - [-] 2.2 Implement the auth service
+  - [x] 2.2 Implement the auth service
     - `backend/src/services/auth.service.js` — `login(email, password)`: lookup with `+passwordHash`, `bcrypt.compare`, identical `INVALID_CREDENTIALS` AppError for unmatched email and failed comparison, `jsonwebtoken.sign({ sub, role }, config.jwtSecret, { expiresIn: '8h' })`, and a `hashPassword` helper at cost 10 used by the seed script
     - _Requirements: 1.1, 1.2, 1.3, 1.4, 1.5, 1.6, 1.10_
 
@@ -91,7 +91,7 @@ Scope discipline: no file, function, or abstraction beyond what design.md names.
     - `backend/src/validation/auth.schemas.js` — strict login body schema (non-blank email ≤ 254, password ≤ 72)
     - _Requirements: 1.11, 9.1, 9.2, 9.3, 9.4, 9.10_
 
-  - [-] 2.4 Implement the authenticate middleware
+  - [x] 2.4 Implement the authenticate middleware
     - `backend/src/middleware/authenticate.js` — reads `Authorization: Bearer <token>`; absent, undecodable, badly signed, or expired all yield 401 `UNAUTHENTICATED`; on success sets `req.user = { id, role }` only
     - _Requirements: 1.7, 1.8, 1.9_
 
@@ -113,7 +113,7 @@ Scope discipline: no file, function, or abstraction beyond what design.md names.
     - `git commit -m "Add authentication with bcrypt hashing and JWT verification"`, then `git push`
     - _Requirements: 14.1, 14.2, 14.7_
 
-- [ ] 3. Authorization
+- [x] 3. Authorization
   - [x] 3.1 Create the single route-to-role permission map
     - `backend/src/permissions.js` — `ROLES` and `WRITE_ROUTE_PERMISSIONS` keyed `"<METHOD> <mounted path>"`, containing every write route of the design's API surface including `PATCH /api/work-orders/:id/status`
     - _Requirements: 2.8, 2.14_
@@ -128,77 +128,77 @@ Scope discipline: no file, function, or abstraction beyond what design.md names.
     - Note: mandatory test 5 needs a real restricted write route with a targeted document, so it is added to this same file in task 5.12, as soon as `POST /api/inventory` exists
     - _Requirements: 2.1, 2.3, 2.5, 2.7, 2.8, 2.11, 2.12, 2.13, 2.14_
 
-  - [-] 3.4 Run the suite, commit, and push increment 3
+  - [x] 3.4 Run the suite, commit, and push increment 3
     - Run `npm test`; commit only on exit 0
     - `git commit -m "Add role-based authorization with a single write-route permission map"`, then `git push`
     - _Requirements: 14.1, 14.2, 14.7_
 
 - [ ] 4. Reference data and the seed script
-  - [~] 4.1 Create the reference data models
+  - [x] 4.1 Create the reference data models
     - `backend/src/models/Category.js` (unique `name`), `backend/src/models/Item.js` (unique `code`, `name`, required `category` ObjectId reference, non-unique `category` index), `backend/src/models/Location.js` (unique `code`, `name`)
     - _Requirements: 3.2_
 
-  - [~] 4.2 Add the reference list routes
+  - [x] 4.2 Add the reference list routes
     - `backend/src/controllers/reference.controller.js` and `backend/src/routes/reference.routes.js` — `GET /api/items` (with populated category), `GET /api/locations`, `GET /api/users` (id, email, role only)
     - Mount in `backend/src/routes/index.js` behind `authenticate` + `authorize`
     - _Requirements: 2.13, 3.2_
 
-  - [~] 4.3 Write the non-interactive seed script
+  - [x] 4.3 Write the non-interactive seed script
     - `backend/scripts/seed.js` — validates `SEED_ADMIN_PASSWORD`, `SEED_OPS_PASSWORD`, `SEED_SALES_PASSWORD` and exits non-zero when any is absent; creates one Admin, one Operations_User, one Sales_User, two Locations, one Category, and two Items; idempotent by upsert on the unique keys; requires no interactive input
     - Add the `seed` script entry to `backend/package.json`
     - _Requirements: 13.5, 13.8, 14.5_
 
-  - [~] 4.4 Extend the per-test seed fixture with reference data
+  - [x] 4.4 Extend the per-test seed fixture with reference data
     - `backend/tests/setup/seedFixture.js` — add two Locations, one Category, two Items, and set `assignedLocation` on the seeded Operations_User
     - _Requirements: 12.11_
 
-  - [ ]* 4.5 Write unit tests for the reference routes
+  - [x]* 4.5 Write unit tests for the reference routes
     - `backend/tests/reference.test.js` — authenticated list responses and shapes, 401 without a token
     - _Requirements: 2.13, 3.2_
 
-  - [~] 4.6 Run the suite, commit, and push increment 4
+  - [-] 4.6 Run the suite, commit, and push increment 4
     - Run `npm test`; commit only on exit 0
     - `git commit -m "Add category, item and location reference data with seed script"`, then `git push`
     - _Requirements: 14.1, 14.2, 14.7_
 
 - [ ] 5. Inventory core: availability, transactions, records, and ledger
-  - [~] 5.1 Create the shared field helpers and the InventoryRecord model
+  - [ ] 5.1 Create the shared field helpers and the InventoryRecord model
     - `backend/src/models/fields.js` — `nonNegativeCount` (integer 0..999,999,999) and `validQuantity` (integer 1..1,000,000)
     - `backend/src/models/InventoryRecord.js` — `item`, `location`, trimmed `batch` 1..32, `physicalQuantity`, `reservedQuantity`, an `availableQuantity` virtual that delegates to `availableQuantity(record)`, and no stored available field
     - Declare the `{ item: 1, location: 1, batch: 1 }` index **once**, as the unique index only; do not add the redundant non-unique duplicate of the same key pattern shown in design.md
     - _Requirements: 3.1, 3.2, 3.3, 3.6, 3.10_
 
-  - [~] 5.2 Create the append-only InventoryTransaction model
+  - [ ] 5.2 Create the append-only InventoryTransaction model
     - `backend/src/models/InventoryTransaction.js` — `inventoryRecord`, signed integer `physicalDelta` and `reservedDelta`, unique `movementReference`, `appliedAt`, nullable `createdBy`; indexes `{ movementReference: 1 }` unique and `{ inventoryRecord: 1, appliedAt: 1 }`; pre-hooks rejecting every update and delete operation
     - _Requirements: 4.4, 4.5, 4.7, 4.10_
 
-  - [~] 5.3 Implement the availability module
+  - [ ] 5.3 Implement the availability module
     - `backend/src/services/availability.js` — `availableQuantity(record)`, `locationAvailableQuantity(records)`, `hasAvailableAtLeastExpr(quantity)`; the only module in the codebase that subtracts `reservedQuantity` from `physicalQuantity`
     - _Requirements: 3.3, 3.4, 3.5, 3.12, 15.1_
 
-  - [~] 5.4 Implement the transaction helper
+  - [ ] 5.4 Implement the transaction helper
     - `backend/src/db/withTransaction.js` — fresh session per attempt, `startTransaction`, commit on success, abort on any error, `endSession()` in `finally`, transient-label retry up to 3 times (4 attempts), then `CONCURRENT_MODIFICATION` 409
     - _Requirements: 8.1, 8.2, 8.3, 8.5_
 
-  - [~] 5.5 Implement the movement reference builders
+  - [ ] 5.5 Implement the movement reference builders
     - `backend/src/services/movementReference.js` — `openingMovementReference`, `adjustMovementReference`, `transferMovementReference`, `reserveMovementReference` exactly as named in design.md
     - _Requirements: 4.5, 4.6, 4.9_
 
-  - [~] 5.6 Implement the inventory service
+  - [ ] 5.6 Implement the inventory service
     - `backend/src/services/inventory.service.js` — `applyMovement` (the one place that writes a record change and its ledger row in the caller's session, using a conditional update whose filter carries the availability/non-negativity condition and mapping `error.code === 11000` to `DUPLICATE_INVENTORY_TRANSACTION`), named guards `assertSufficientPhysical` and `assertSufficientAvailable`, `createRecord` (pre-generated `_id`, existence checks returning `INVALID_REFERENCE`, duplicate triple returning `DUPLICATE_INVENTORY_RECORD`, opening ledger row in the same transaction), `adjustRecord` (`IN`/`OUT`), `listRecords`, `getLocationAvailability` (0 when no records)
     - _Requirements: 3.7, 3.8, 3.9, 3.10, 3.11, 3.12, 4.2, 4.3, 4.4, 4.6, 4.9, 8.1, 15.5_
 
-  - [~] 5.7 Add the inventory validation schemas and quantity error code selection
+  - [ ] 5.7 Add the inventory validation schemas and quantity error code selection
     - `backend/src/validation/inventory.schemas.js` — strict bodies for create (`item`, `location`, `batch`, `physicalQuantity`, `movementReference`) and adjust (`direction`, `quantity`, `movementReference`), plus the `?item&location` query schemas
     - Extend `backend/src/middleware/validate.js` so a failure whose issue paths all name a quantity field reports `INVALID_QUANTITY` and mixed failures fall back to `VALIDATION_ERROR`
     - _Requirements: 4.1, 4.8, 9.2, 9.3, 9.4_
 
-  - [~] 5.8 Wire the inventory routes
+  - [ ] 5.8 Wire the inventory routes
     - `backend/src/controllers/inventory.controller.js` (reads `req.validated` and `req.user` only, no quantity comparisons) and `backend/src/routes/inventory.routes.js` — `GET /api/inventory`, `GET /api/inventory/availability`, `POST /api/inventory`, `POST /api/inventory/:id/adjust` with `authorize` and `validate` attached per route
     - Mount in `backend/src/routes/index.js`
     - _Requirements: 2.4, 2.5, 3.3, 3.5, 9.1, 15.5_
 
-  - [~] 5.9 Extend the seed script and the test fixture with inventory records
+  - [ ] 5.9 Extend the seed script and the test fixture with inventory records
     - `backend/scripts/seed.js` — add at least one Inventory_Record whose Available_Quantity is ≥ 1 at a location usable as a transfer source
     - `backend/tests/setup/seedFixture.js` — add two Inventory_Records with stated physical and reserved quantities
     - _Requirements: 12.11, 13.5_
@@ -211,7 +211,7 @@ Scope discipline: no file, function, or abstraction beyond what design.md names.
     - `backend/tests/inventory.test.js` — 100/30 → 70 example, duplicate triple 409, `INVALID_REFERENCE`, opening ledger row contents, adjustment guards, availability read of 0 when no record exists
     - _Requirements: 3.4, 3.7, 3.11, 3.12, 4.2, 4.3, 4.9_
 
-  - [~] 5.12 Write mandatory test 5 against a real restricted write route
+  - [ ] 5.12 Write mandatory test 5 against a real restricted write route
     - Extend `backend/tests/authorization.test.js` — a Sales_User token calling `POST /api/inventory/:id/adjust` receives 403 `FORBIDDEN`, and every field of the targeted Inventory_Record equals the value read immediately before the request; issued over HTTP through the app
     - _Requirements: 2.5, 12.5, 12.13_
 
@@ -244,29 +244,29 @@ Scope discipline: no file, function, or abstraction beyond what design.md names.
     - **Property 7: Invalid quantities are rejected identically everywhere**
     - **Validates: Requirements 4.1, 5.2, 6.13, 7.9**
 
-  - [~] 5.20 Run the suite, commit, and push increment 5
+  - [ ] 5.20 Run the suite, commit, and push increment 5
     - Run `npm test`; commit only on exit 0
     - `git commit -m "Add inventory records, derived availability and transactional ledger"`, then `git push`
     - _Requirements: 14.1, 14.2, 14.7_
 
 - [ ] 6. Work orders and derived shortage
-  - [~] 6.1 Create the WorkOrder model
+  - [ ] 6.1 Create the WorkOrder model
     - `backend/src/models/WorkOrder.js` — `location`, `item`, `requiredQuantity` (`validQuantity`), `assignedUser`, `status` enum defaulting to `Assigned`, nullable `statusChangedAt`, `createdBy`, indexes `{ item, location }` and `{ status }`, and no stored shortage field
     - _Requirements: 5.1, 5.4_
 
-  - [~] 6.2 Implement the work order service
+  - [ ] 6.2 Implement the work order service
     - `backend/src/services/workOrder.service.js` — `createWorkOrder` (existence checks → `INVALID_REFERENCE`, status `Assigned`), `listWorkOrders` and `getWorkOrder` computing `locationAvailableQuantity` and `shortageQuantity = max(0, required - available)` at read time via `availability.js`, `NOT_FOUND` on unmatched ids, and the named guard `nextWorkOrderStatus` used by `changeStatus` to record `statusChangedAt` or throw `INVALID_STATUS_TRANSITION`
     - _Requirements: 5.1, 5.3, 5.4, 5.5, 5.6, 5.7, 5.8, 5.9, 5.10, 5.12, 15.5_
 
-  - [~] 6.3 Add the work order validation schemas
+  - [ ] 6.3 Add the work order validation schemas
     - `backend/src/validation/workOrder.schemas.js` — strict creation body, status-change body limited to the three enum values, `objectId` path params, list query filters
     - _Requirements: 5.2, 5.11, 9.2, 9.10_
 
-  - [~] 6.4 Wire the work order routes
+  - [ ] 6.4 Wire the work order routes
     - `backend/src/controllers/workOrder.controller.js` and `backend/src/routes/workOrder.routes.js` — `GET /api/work-orders`, `GET /api/work-orders/:id`, `POST /api/work-orders` (Admin), `PATCH /api/work-orders/:id/status`; mount in `backend/src/routes/index.js` and confirm both write routes resolve against `WRITE_ROUTE_PERMISSIONS`
     - _Requirements: 2.2, 2.3, 2.14, 5.1, 5.7_
 
-  - [~] 6.5 Extend the seed script with a shortage work order
+  - [ ] 6.5 Extend the seed script with a shortage work order
     - `backend/scripts/seed.js` — add at least one Work_Order whose `requiredQuantity` exceeds the Location_Available_Quantity of its item at its location, so a non-zero shortage is observable
     - _Requirements: 13.5_
 
@@ -283,37 +283,37 @@ Scope discipline: no file, function, or abstraction beyond what design.md names.
     - **Property 9: A status change is accepted exactly when it is the successor**
     - **Validates: Requirements 5.7, 5.9, 5.11, 6.5, 6.10**
 
-  - [~] 6.9 Run the suite, commit, and push increment 6
+  - [ ] 6.9 Run the suite, commit, and push increment 6
     - Run `npm test`; commit only on exit 0
     - `git commit -m "Add work orders with read-time material shortage calculation"`, then `git push`
     - _Requirements: 14.1, 14.2, 14.7_
 
 - [ ] 7. Internal stock transfers
-  - [~] 7.1 Create the InternalTransfer model
+  - [ ] 7.1 Create the InternalTransfer model
     - `backend/src/models/InternalTransfer.js` — `item`, trimmed `batch`, `sourceLocation`, `destinationLocation`, `quantity` (`validQuantity`), `receivedQuantity` bounded by `quantity`, `status` enum defaulting to `Requested`, nullable `dispatchedAt` and `receivedAt`, indexes `{ status }` and `{ item, sourceLocation, batch }`
     - _Requirements: 6.1, 15.2_
 
-  - [~] 7.2 Implement the transfer service
+  - [ ] 7.2 Implement the transfer service
     - `backend/src/services/transfer.service.js` — named guards `assertDifferentLocations` (`SAME_LOCATION_TRANSFER`) and `assertTransferTransition` (`INVALID_STATUS_TRANSITION`); `createTransfer` with existence checks including the source Inventory_Record (`INVALID_REFERENCE`) and no inventory write; `dispatchTransfer` inside `withTransaction` calling `applyMovement` with `-quantity` at the source and `transferMovementReference(id, 'DISPATCH')`; `receiveTransfer` inside `withTransaction` increasing or creating the destination record, setting `receivedQuantity` and `receivedAt`, using `transferMovementReference(id, 'RECEIPT')` and mapping the duplicate-key signal to `TRANSFER_ALREADY_RECEIVED`; `NOT_FOUND` on unmatched ids
     - _Requirements: 6.1, 6.2, 6.3, 6.4, 6.5, 6.6, 6.7, 6.8, 6.9, 6.10, 6.14, 6.15, 15.2, 15.5_
 
-  - [~] 7.3 Add the transfer validation schemas
+  - [ ] 7.3 Add the transfer validation schemas
     - `backend/src/validation/transfer.schemas.js` — strict creation body, empty dispatch and receive bodies, `objectId` path params, list query filter
     - _Requirements: 6.13, 9.2, 9.10_
 
-  - [~] 7.4 Wire the transfer routes
+  - [ ] 7.4 Wire the transfer routes
     - `backend/src/controllers/transfer.controller.js` and `backend/src/routes/transfer.routes.js` — `GET /api/transfers`, `POST /api/transfers`, `POST /api/transfers/:id/dispatch`, `POST /api/transfers/:id/receive`; mount in `backend/src/routes/index.js`
     - _Requirements: 2.4, 2.5, 6.1, 6.4, 6.7_
 
-  - [~] 7.5 Write mandatory test 2: over-availability dispatch
+  - [ ] 7.5 Write mandatory test 2: over-availability dispatch
     - `backend/tests/transfers.test.js` — dispatch of a quantity above source availability returns 409 `INSUFFICIENT_AVAILABLE_QUANTITY`, the source physical quantity equals the value read immediately before, and the status stays `Requested`; issued over HTTP
     - _Requirements: 6.5, 12.2, 12.13_
 
-  - [~] 7.6 Write mandatory test 3: three-point destination reading
+  - [ ] 7.6 Write mandatory test 3: three-point destination reading
     - Extend `backend/tests/transfers.test.js` — destination physical quantity before dispatch, while `Dispatched`, and after `Received`; first two readings equal, third equals the first plus the transfer quantity
     - _Requirements: 6.3, 6.6, 6.7, 12.3, 12.13_
 
-  - [~] 7.7 Write mandatory test 4: second receipt rejected
+  - [ ] 7.7 Write mandatory test 4: second receipt rejected
     - Extend `backend/tests/transfers.test.js` — a second receipt returns 409 `TRANSFER_ALREADY_RECEIVED` and the destination physical quantity equals the value read after the first accepted receipt
     - _Requirements: 6.9, 12.4, 12.13_
 
@@ -330,29 +330,29 @@ Scope discipline: no file, function, or abstraction beyond what design.md names.
     - **Property 11: Receipt is idempotent and received quantity stays bounded**
     - **Validates: Requirements 6.9, 6.12, 15.2**
 
-  - [~] 7.11 Run the suite, commit, and push increment 7
+  - [ ] 7.11 Run the suite, commit, and push increment 7
     - Run `npm test`; commit only on exit 0
     - `git commit -m "Add internal transfers with dispatch and receipt lifecycle"`, then `git push`
     - _Requirements: 14.1, 14.2, 14.7_
 
 - [ ] 8. Customer orders and stock reservation
-  - [~] 8.1 Create the CustomerOrder model
+  - [ ] 8.1 Create the CustomerOrder model
     - `backend/src/models/CustomerOrder.js` — embedded `reservationEntrySchema` (`item`, `location`, `batch`, `quantity`, `_id: false`), `customerName` 1..120 trimmed, `item`, `location`, `quantity`, `status` enum defaulting to `Reserved`, `reservations` validated to hold 1..20 entries, `createdBy`, indexes `{ item, location }` and `{ status }`
     - _Requirements: 7.1, 7.11, 15.3_
 
-  - [~] 8.2 Implement the order service
+  - [ ] 8.2 Implement the order service
     - `backend/src/services/order.service.js` — `createOrder` inside `withTransaction` with existence checks (`INVALID_REFERENCE`), and `reserveAcrossBatches` scanning records for the item and location sorted `{ batch: 1 }`, taking `min(remaining, availableQuantity(record))`, applying each increment through `updateOne` whose filter carries `hasAvailableAtLeastExpr(take)`, deciding on `matchedCount === 1`, writing one ledger row per changed record with `reserveMovementReference(orderId, recordId)`, and throwing `INSUFFICIENT_AVAILABLE_QUANTITY` when a filter misses or `remaining > 0` at the end; `getOrder`/`listOrders` with `NOT_FOUND`
     - _Requirements: 7.1, 7.2, 7.3, 7.4, 7.10, 7.12, 15.3, 15.5, 15.6_
 
-  - [~] 8.3 Add the order validation schemas
+  - [ ] 8.3 Add the order validation schemas
     - `backend/src/validation/order.schemas.js` — strict creation body (`customerName`, `item`, `location`, `quantity`), `objectId` path param, list query filter
     - _Requirements: 7.9, 7.11, 9.2, 9.10_
 
-  - [~] 8.4 Wire the order routes
+  - [ ] 8.4 Wire the order routes
     - `backend/src/controllers/order.controller.js` and `backend/src/routes/order.routes.js` — `GET /api/orders`, `GET /api/orders/:id`, `POST /api/orders`; mount in `backend/src/routes/index.js`
     - _Requirements: 2.6, 2.7, 7.1_
 
-  - [~] 8.5 Write mandatory test 1: reservation above availability
+  - [ ] 8.5 Write mandatory test 1: reservation above availability
     - `backend/tests/orders.test.js` — a creation request for a quantity above the location availability returns 409 `INSUFFICIENT_AVAILABLE_QUANTITY`, no Customer_Order document exists for it, and the reserved quantity of every affected record equals the value read immediately before; issued over HTTP
     - _Requirements: 7.3, 12.1, 12.13_
 
@@ -365,18 +365,18 @@ Scope discipline: no file, function, or abstraction beyond what design.md names.
     - **Property 12: A reservation exactly covers its order, in ascending batch order**
     - **Validates: Requirements 7.1, 7.3, 15.3, 15.6**
 
-  - [~] 8.8 Run the suite, commit, and push increment 8
+  - [ ] 8.8 Run the suite, commit, and push increment 8
     - Run `npm test`; commit only on exit 0
     - `git commit -m "Add customer orders with ascending-batch stock reservation"`, then `git push`
     - _Requirements: 14.1, 14.2, 14.7_
 
 - [ ] 9. Concurrency and transaction hardening
-  - [~] 9.1 Harden retry and session hygiene
+  - [ ] 9.1 Harden retry and session hygiene
     - Review `backend/src/db/withTransaction.js` against the retry rule: fresh session per attempt so a retry re-runs from the first read, swallowed abort errors, `endSession()` on every exit path, `CONCURRENT_MODIFICATION` after the fourth attempt
     - Add `backend/tests/setup/sessionCount.js` — reads the server's open session count so tests can compare before and after a request
     - _Requirements: 8.2, 8.3, 8.5_
 
-  - [~] 9.2 Write the concurrency tests
+  - [ ] 9.2 Write the concurrency tests
     - `backend/tests/concurrency.test.js` — availability 100 with unawaited orders of 80 and 50 via `Promise.allSettled`: exactly one 201, one 409 `INSUFFICIENT_AVAILABLE_QUANTITY`, exactly one order document, reserved up by exactly the committed quantity; plus two unawaited receipts for one transfer: exactly one commit, the other 409 `TRANSFER_ALREADY_RECEIVED`
     - _Requirements: 6.16, 7.5, 7.6, 7.7, 12.6, 12.13_
 
@@ -406,53 +406,53 @@ Scope discipline: no file, function, or abstraction beyond what design.md names.
     - **Property 16: Authentication and role enforcement hold across the route table**
     - **Validates: Requirements 1.2, 1.3, 1.4, 1.7, 1.8, 1.9, 1.11, 2.1, 2.2, 2.3, 2.4, 2.5, 2.6, 2.7, 2.12, 2.13**
 
-  - [~] 9.9 Run the suite, commit, and push increment 9
+  - [ ] 9.9 Run the suite, commit, and push increment 9
     - Run `npm test`; commit only on exit 0
     - `git commit -m "Add concurrency and transaction hardening tests with retry bounds"`, then `git push`
     - _Requirements: 14.1, 14.2, 14.7_
 
 - [ ] 10. Frontend: five screens wired to the API
-  - [~] 10.1 Scaffold the Vite React app
+  - [ ] 10.1 Scaffold the Vite React app
     - `frontend/package.json` (react, react-dom, react-router-dom; dev: vite, @vitejs/plugin-react, vitest, @testing-library/react, @testing-library/jest-dom, jsdom), `frontend/vite.config.js` that throws when `VITE_API_BASE_URL` is absent, empty, or whitespace, `frontend/index.html`, `frontend/src/main.jsx`, `frontend/.env.example`
     - _Requirements: 10.8, 10.11_
 
-  - [~] 10.2 Implement the API client
+  - [ ] 10.2 Implement the API client
     - `frontend/src/api/client.js` — base URL from `import.meta.env.VITE_API_BASE_URL` with no fallback, Bearer header from stored token, global 401 handling that clears the session and signals a session-ended redirect, `ApiError` carrying `code` and `message` for every other non-2xx response
     - _Requirements: 10.8, 11.3, 11.4, 11.12_
 
-  - [~] 10.3 Implement the auth context and route guard
+  - [ ] 10.3 Implement the auth context and route guard
     - `frontend/src/auth/AuthContext.jsx` — `{ token, user, login, logout }` persisted in localStorage under one key, `login` posting to `/api/auth/login` and navigating to Inventory
     - `frontend/src/components/RequireAuth.jsx` — renders the Login screen and issues no API request when no token is held
     - _Requirements: 11.2, 11.4, 11.17, 2.10_
 
-  - [~] 10.4 Wire the router, navigation, and the mirrored permission map
+  - [ ] 10.4 Wire the router, navigation, and the mirrored permission map
     - `frontend/src/App.jsx` — exactly five screen routes and a catch-all redirect, no sixth screen
     - `frontend/src/auth/permissions.js` — the write-route-to-role constant mirroring `backend/src/permissions.js`, plus `canWrite(routeKey, role)`
     - `frontend/src/components/Nav.jsx` — navigation entries hidden when the session role is not permitted, nothing rendered before login
     - _Requirements: 2.9, 2.10, 11.1_
 
-  - [~] 10.5 Build the Login screen
+  - [ ] 10.5 Build the Login screen
     - `frontend/src/screens/LoginScreen.jsx` — submits credentials, retains the email value on rejection, shows a credentials-rejected message, stores nothing on failure, disables the submit control while the request is in flight
     - _Requirements: 11.2, 11.13, 11.16_
 
-  - [~] 10.6 Build the Inventory screen and shared display components
+  - [ ] 10.6 Build the Inventory screen and shared display components
     - `frontend/src/components/DataTable.jsx`, `ErrorBanner.jsx`, `EmptyState.jsx`
     - `frontend/src/screens/InventoryScreen.jsx` — lists item, category, location, batch, physical, reserved, and available quantity taken from the API response
     - _Requirements: 11.5, 11.12, 11.15_
 
-  - [~] 10.7 Build the Work Orders screen
+  - [ ] 10.7 Build the Work Orders screen
     - `frontend/src/screens/WorkOrdersScreen.jsx` — lists id, location, item, required quantity, assigned user, status, shortage; Admin-only creation form; status-change control gated by the mirrored map; refetch after a successful write
     - _Requirements: 11.6, 11.7, 11.13, 11.14_
 
-  - [~] 10.8 Build the Internal Transfers screen
+  - [ ] 10.8 Build the Internal Transfers screen
     - `frontend/src/screens/TransfersScreen.jsx` — lists id, source, destination, item, batch, quantity, status; dispatch control only on `Requested` rows and receipt control only on `Dispatched` rows for Admin/OperationsUser, neither on `Received` rows; refetch after a successful write
     - _Requirements: 11.8, 11.9, 11.13, 11.14_
 
-  - [~] 10.9 Build the Customer Orders screen
+  - [ ] 10.9 Build the Customer Orders screen
     - `frontend/src/screens/CustomerOrdersScreen.jsx` — lists customer name, item, location, quantity, status; creation form rendered on this screen only and only for SalesUser/Admin; refetch after a successful write
     - _Requirements: 11.10, 11.11, 11.13, 11.14_
 
-  - [~] 10.10 Set up the frontend test runner
+  - [ ] 10.10 Set up the frontend test runner
     - `frontend/vitest.config.js` (jsdom environment), `frontend/src/test/setup.js` (jest-dom matchers), a mocked API client module, and the `test` script in `frontend/package.json`
     - _Requirements: 11.1_
 
@@ -465,26 +465,26 @@ Scope discipline: no file, function, or abstraction beyond what design.md names.
     - **Property 19: The client attaches the token and reacts to every 401**
     - **Validates: Requirements 11.3, 11.4, 11.12, 11.14**
 
-  - [~] 10.13 Run both suites, commit, and push increment 10
+  - [ ] 10.13 Run both suites, commit, and push increment 10
     - Run `npm test` in `backend/` and `npm test` in `frontend/`; commit only when both exit 0
     - `git commit -m "Add React frontend with five screens and role-gated controls"`, then `git push`
     - _Requirements: 14.1, 14.2, 14.3, 14.7_
 
 - [ ] 11. Documentation set
-  - [~] 11.1 Write the README
+  - [ ] 11.1 Write the README
     - `README.md` — tech stack, minimum Node.js and MongoDB versions, numbered setup steps, database setup including the `rs.initiate()` replica-set step, the full environment variable table with purpose/required/range/non-credential example, the verbatim commands to run the API server, the web client, the seed script, and the test suite, the seeded user emails with their roles and the environment variable supplying each password, the replica-set reason and the 3-retry limit, and links to the other documents
     - _Requirements: 8.6, 10.7, 13.1, 13.5, 13.7, 13.8_
 
-  - [~] 11.2 Write the database schema document with the ER diagram source
+  - [ ] 11.2 Write the database schema document with the ER diagram source
     - `docs/database-schema.md` — every collection with each field, its type, and whether it is required or optional, every reference field with its target collection, and every unique index
     - `docs/er-diagram.mmd` — the tracked Mermaid ER diagram source, embedded by reference in the schema document
     - _Requirements: 13.2_
 
-  - [~] 11.3 Write the API documentation
+  - [ ] 11.3 Write the API documentation
     - `docs/api.md` — for every route: method, path, permitted role set, request schema, success response schema with status, every error code with its HTTP status, and one example request body and success response; plus the complete error code list and the exact required environment variable list
     - _Requirements: 13.3, 13.9_
 
-  - [~] 11.4 Write the deviation and extensibility documents
+  - [ ] 11.4 Write the deviation and extensibility documents
     - `docs/mongodb-deviation.md` — MongoDB replacing the relational database of the brief, how ObjectId references and multi-document transactions preserve its intent, and the accepted trade-offs (application-enforced referential integrity, replica-set requirement)
     - `docs/extensibility.md` — for each of adding a damaged quantity, partial transfer receipt, cancelling an order and releasing its reservation, and restricting a user to their assigned location: the module, the named function, and the schema fields to edit
     - _Requirements: 13.4, 15.7_
@@ -493,7 +493,7 @@ Scope discipline: no file, function, or abstraction beyond what design.md names.
     - `backend/tests/docs.test.js` — asserts that the route table in `docs/api.md` matches the routes the app declares, that its error code list matches the keys of `src/errors/errorCodes.js`, and that its environment variable list matches the required set in `src/config/index.js`
     - _Requirements: 13.9_
 
-  - [~] 11.6 Run the suite, commit, and push the documentation increment
+  - [ ] 11.6 Run the suite, commit, and push the documentation increment
     - Run `npm test` in `backend/`; commit only on exit 0
     - `git commit -m "Add README, schema, API and extensibility documentation"`, then `git push`
     - _Requirements: 14.1, 14.2, 14.3, 14.7_

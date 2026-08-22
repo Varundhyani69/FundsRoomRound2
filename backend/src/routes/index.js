@@ -10,18 +10,25 @@ const express = require('express');
 
 const authenticate = require('../middleware/authenticate');
 const authRoutes = require('./auth.routes');
+const referenceRoutes = require('./reference.routes');
 
 const router = express.Router();
 
 // Public: the one route that runs without a token (Req 1.8).
 router.use('/auth', authRoutes);
 
+// Reference data for the Web_Client form dropdowns. Read-only, so any of the three
+// Roles may call them, but each still needs a valid token (Req 2.13, 3.2).
+router.use('/items', authenticate, referenceRoutes.items);
+router.use('/locations', authenticate, referenceRoutes.locations);
+router.use('/users', authenticate, referenceRoutes.users);
+
 // Every protected router is mounted with `authenticate` in front of it, as
 //     router.use('/inventory', authenticate, inventoryRoutes);
 // rather than a bare `router.use(authenticate)` here. A catch-all would answer 401
 // for any unmatched /api path too, and Req 9.12 wants those to reach notFound and
 // return 404 ROUTE_NOT_FOUND. Attaching it per mount keeps both true.
-// Routers for inventory, work orders, transfers, orders and reference data are added
-// in their own increments.
+// Routers for inventory, work orders, transfers and orders are added in their own
+// increments.
 
 module.exports = router;

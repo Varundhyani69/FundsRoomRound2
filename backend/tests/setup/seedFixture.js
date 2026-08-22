@@ -2,15 +2,17 @@
 //
 // dbSetup.js deletes every document of every collection before each test and then calls
 // `seedFixture()`, so every test starts from this same known state and the suite passes
-// in any execution order. Tasks 4.4 and 5.9 extend this module with the reference data
-// and the inventory records.
+// in any execution order. Task 5.9 extends this module further with the inventory records.
 //
-// Only the API_Server's own modules are used to build the state: the User model and
-// `hashPassword` from the Auth_Service, so the fixture cannot drift from how a real User
-// is stored.
+// Only the API_Server's own modules are used to build the state: the models and
+// `hashPassword` from the Auth_Service, so the fixture cannot drift from how a real
+// document is stored.
 
 const crypto = require('crypto');
 
+const Category = require('../../src/models/Category');
+const Item = require('../../src/models/Item');
+const Location = require('../../src/models/Location');
 const User = require('../../src/models/User');
 const { hashPassword, login } = require('../../src/services/auth.service');
 
@@ -20,6 +22,61 @@ const USER_IDS = {
     Admin: '000000000000000000000a01',
     OperationsUser: '000000000000000000000a02',
     SalesUser: '000000000000000000000a03',
+};
+
+// The reference data ids are fixed for the same reason the User ids are: a test can name
+// a Location or an Item directly instead of looking one up first. Each block of ids uses
+// its own trailing letter, so an id in a failure message says which collection it is from.
+const LOCATION_IDS = {
+    main: '000000000000000000000b01',
+    secondary: '000000000000000000000b02',
+};
+
+const CATEGORY_IDS = {
+    rawMaterial: '000000000000000000000c01',
+};
+
+const ITEM_IDS = {
+    widget: '000000000000000000000d01',
+    gadget: '000000000000000000000d02',
+};
+
+// Two Locations, so a transfer in a test has a distinct source and destination.
+const FIXTURE_LOCATIONS = {
+    main: {
+        id: LOCATION_IDS.main,
+        code: 'MAIN',
+        name: 'Main Warehouse',
+    },
+    secondary: {
+        id: LOCATION_IDS.secondary,
+        code: 'SEC',
+        name: 'Secondary Warehouse',
+    },
+};
+
+// One Category, which both fixture Items belong to.
+const FIXTURE_CATEGORIES = {
+    rawMaterial: {
+        id: CATEGORY_IDS.rawMaterial,
+        name: 'Raw Material',
+    },
+};
+
+// Two Items, so a test that needs "another Item" does not have to create one.
+const FIXTURE_ITEMS = {
+    widget: {
+        id: ITEM_IDS.widget,
+        code: 'WIDGET',
+        name: 'Fixture Widget',
+        category: CATEGORY_IDS.rawMaterial,
+    },
+    gadget: {
+        id: ITEM_IDS.gadget,
+        code: 'GADGET',
+        name: 'Fixture Gadget',
+        category: CATEGORY_IDS.rawMaterial,
+    },
 };
 
 // Test-only passwords. They are generated fresh in this process and never written to
@@ -42,6 +99,9 @@ const FIXTURE_USERS = {
         email: 'operations@fixture.test',
         role: 'OperationsUser',
         password: testPassword('operations'),
+        // The one seeded User tied to a site, so a test can check what an assigned
+        // Assigned_Location looks like without writing one first (Req 15.4).
+        assignedLocation: LOCATION_IDS.main,
     },
     SalesUser: {
         id: USER_IDS.SalesUser,
@@ -86,6 +146,8 @@ async function seedUsers() {
                 email: FIXTURE_USERS[role].email,
                 passwordHash: await hashFor(role),
                 role,
+                // Only the Operations_User names one; the others stay unassigned.
+                assignedLocation: FIXTURE_USERS[role].assignedLocation ?? null,
             }))
         )
     );
@@ -94,13 +156,67 @@ async function seedUsers() {
 }
 
 /**
+ * Insert the reference data every other fixture row points at: the Locations, the
+ * Category, and the Items belonging to it.
+ *
+ * @returns {Promise<{
+ *   locations: typeof FIXTURE_LOCATIONS,
+ *   categories: typeof FIXTURE_CATEGORIES,
+ *   items: typeof FIXTURE_ITEMS,
+ * }>} the fixture description, ids included
+ */
+async function seedReferenceData() {
+    // Locations and Categories reference nothing, so they can be written together. The
+    // Items follow, because each one names an existing Category (Req 3.2).
+    await Promise.all([
+        Location.create(
+            Object.values(FIXTURE_LOCATIONS).map(({ id, code, name }) => ({
+                _id: id,
+                code,
+                name,
+            }))
+        ),
+        Category.create(
+            Object.values(FIXTURE_CATEGORIES).map(({ id, name }) => ({
+                _id: id,
+                name,
+            }))
+        ),
+    ]);
+
+    await Item.create(
+        Object.values(FIXTURE_ITEMS).map(({ id, code, name, category }) => ({
+            _id: id,
+            code,
+            name,
+            category,
+        }))
+    );
+
+    return {
+        locations: FIXTURE_LOCATIONS,
+        categories: FIXTURE_CATEGORIES,
+        items: FIXTURE_ITEMS,
+    };
+}
+
+/**
  * Load the whole fixture. Called from the `beforeEach` in dbSetup.js.
  *
- * @returns {Promise<{ users: typeof FIXTURE_USERS }>}
+ * @returns {Promise<{
+ *   users: typeof FIXTURE_USERS,
+ *   locations: typeof FIXTURE_LOCATIONS,
+ *   categories: typeof FIXTURE_CATEGORIES,
+ *   items: typeof FIXTURE_ITEMS,
+ * }>}
  */
 async function seedFixture() {
+    // Reference data first: the seeded Operations_User names a fixture Location, so that
+    // Location has to exist by the time the Users are written.
+    const reference = await seedReferenceData();
     const users = await seedUsers();
-    return { users };
+
+    return { users, ...reference };
 }
 
 /**
@@ -124,7 +240,11 @@ async function tokenFor(role) {
 
 module.exports = {
     FIXTURE_USERS,
+    FIXTURE_LOCATIONS,
+    FIXTURE_CATEGORIES,
+    FIXTURE_ITEMS,
     seedUsers,
+    seedReferenceData,
     seedFixture,
     tokenFor,
 };
