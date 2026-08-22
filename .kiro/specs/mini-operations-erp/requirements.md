@@ -1,0 +1,341 @@
+# Requirements Document
+
+## Introduction
+
+Mini Operations ERP is a full-stack operations management application built as an intern-level technical case study submission. The application supports a company that operates from multiple locations and manages inventory, work orders, internal stock transfers, and customer orders.
+
+The core business flow is: Inventory → Work Order → Stock Check → Internal Transfer / Shortage → Customer Reservation.
+
+The system is implemented on the MERN stack in JavaScript (MongoDB, Express, React, Node.js). The original case study brief asks for a relational database; MongoDB is used instead. To honor the intent of that brief, the data model uses explicit referenced relationships between collections (ObjectId references rather than duplicated embedded copies of shared entities), and all multi-step stock movements are executed inside MongoDB multi-document transactions on a replica-set deployment. This deviation and its mitigations are documented in the project README.
+
+Scope boundaries: exactly five screens are delivered (Login, Inventory, Work Orders, Internal Transfers, Customer Orders). Functional correctness, transactional integrity, and backend authorization take priority over visual design. Engineering practices are solid and idiomatic but deliberately simple, so that every line of the implementation is explainable in an interview.
+
+Delivery is incremental: each independently testable increment is committed and pushed to https://github.com/Varundhyani69/FundsRoomRound2, producing a visible development history rather than a single squashed commit.
+
+## Glossary
+
+- **Mini_Operations_ERP**: The complete system, comprising the Web_Client and the API_Server.
+- **API_Server**: The Node.js and Express backend process that exposes the REST API.
+- **Web_Client**: The React single-page frontend application.
+- **Auth_Service**: The API_Server component that authenticates users and issues and validates access tokens.
+- **Authorization_Middleware**: The API_Server component that evaluates the authenticated user's Role against the required permission of the requested route before the route handler executes.
+- **Inventory_Service**: The API_Server component that reads and mutates Inventory_Record documents.
+- **Work_Order_Service**: The API_Server component that creates, updates, and evaluates Work_Order documents.
+- **Transfer_Service**: The API_Server component that creates and advances Internal_Transfer documents.
+- **Order_Service**: The API_Server component that creates Customer_Order documents and reserves Inventory_Record quantities.
+- **Validation_Layer**: The API_Server component that validates the structure, type, and range of every incoming request payload before business logic executes.
+- **Error_Handler**: The centralized Express error-handling middleware that converts thrown errors into HTTP responses with a stable JSON error shape.
+- **Config_Loader**: The API_Server component that reads configuration values from environment variables at process startup.
+- **Database**: The MongoDB deployment, running as a replica set so that multi-document transactions are available.
+- **Transaction**: A MongoDB multi-document transaction executed within a single client session, committing all included writes together or aborting all of them.
+- **Test_Suite**: The automated backend test project executed by a single documented command.
+- **Documentation_Set**: The submission artifacts, comprising the README, the database schema document, and the API documentation.
+- **User**: An authenticated person, holding exactly one Role.
+- **Role**: One of `Admin`, `OperationsUser`, or `SalesUser`.
+- **Admin**: A User with Role `Admin`.
+- **Operations_User**: A User with Role `OperationsUser`.
+- **Sales_User**: A User with Role `SalesUser`.
+- **Assigned_Location**: The Location reference stored on a User document, which may be null.
+- **Item**: A stock-keeping product definition, referenced by an Item code and belonging to one Category.
+- **Category**: A classification grouping for Item documents.
+- **Location**: A physical company site that holds inventory.
+- **Batch**: A named lot identifier that distinguishes one received quantity of an Item from another at the same Location.
+- **Inventory_Record**: A document uniquely identified by the combination of Item, Location, and Batch, holding Physical_Quantity and Reserved_Quantity.
+- **Physical_Quantity**: The non-negative integer count of units of an Item physically present for an Inventory_Record.
+- **Reserved_Quantity**: The non-negative integer count of units of an Inventory_Record that are committed to Customer_Order documents and therefore not free to promise.
+- **Available_Quantity**: The derived value `Physical_Quantity - Reserved_Quantity` for an Inventory_Record.
+- **Location_Available_Quantity**: The sum of Available_Quantity across every Inventory_Record for one Item at one Location.
+- **Inventory_Transaction**: An append-only document recording one applied change to one Inventory_Record, carrying a Movement_Reference.
+- **Movement_Reference**: The unique identifier of the business action that caused an Inventory_Transaction, composed of the action type and the identifier of the originating Work_Order, Internal_Transfer, or Customer_Order together with the lifecycle step.
+- **Work_Order**: A document instructing an Assigned_User to consume a Required_Quantity of one Item at one Location.
+- **Assigned_User**: The User referenced by a Work_Order as responsible for performing the work.
+- **Work_Order_Status**: One of `Assigned`, `InProgress`, `Completed`.
+- **Shortage_Quantity**: The value `max(0, Required_Quantity - Location_Available_Quantity)` computed for a Work_Order.
+- **Internal_Transfer**: A document moving a Quantity of one Item, in one Batch, from a Source_Location to a Destination_Location.
+- **Source_Location**: The Location an Internal_Transfer moves stock out of.
+- **Destination_Location**: The Location an Internal_Transfer moves stock into.
+- **Transfer_Status**: One of `Requested`, `Dispatched`, `Received`.
+- **Received_Quantity**: The count of units of an Internal_Transfer that have been received at its Destination_Location.
+- **Customer_Order**: A document recording a customer's requested Quantity of one Item, against which stock is reserved.
+- **Customer_Order_Status**: One of `Reserved`, `Cancelled`.
+- **Reservation_Entry**: A record stored on a Customer_Order naming one Item, one Location, one Batch, and the Quantity reserved from the corresponding Inventory_Record.
+- **Quantity**: A requested or moved count of units of an Item.
+- **Valid_Quantity**: An integer from 1 to 1,000,000 inclusive.
+
+## Requirements
+
+### Requirement 1: Authentication
+
+**User Story:** As a company employee, I want to log in with my credentials and receive an access token, so that the system can identify me on every subsequent request.
+
+#### Acceptance Criteria
+
+1. WHEN a login request is submitted with an email that, after trimming surrounding whitespace and lowercasing, matches the stored email of exactly one User and a password whose bcrypt comparison against the stored password hash succeeds, THE Auth_Service SHALL respond with HTTP 200, a signed JSON Web Token, and the User identifier, email, Role, and Assigned_Location of that User, and SHALL exclude the stored password hash from the response body.
+2. IF a login request is submitted with an email that, after trimming and lowercasing, matches no User, THEN THE Auth_Service SHALL respond with HTTP 401 and the error code `INVALID_CREDENTIALS`, SHALL issue no JSON Web Token, and SHALL leave every User document unchanged.
+3. IF a login request is submitted with a password whose bcrypt comparison against the stored password hash fails, THEN THE Auth_Service SHALL respond with HTTP 401 and the error code `INVALID_CREDENTIALS`, SHALL issue no JSON Web Token, and SHALL leave every User document unchanged.
+4. THE Auth_Service SHALL return an identical HTTP status, error code, and message for an unmatched email and for a failed password comparison, so that a client cannot determine which User email addresses exist.
+5. THE Auth_Service SHALL store every User password only as a bcrypt hash with a work factor of at least 10 and at most 12, and SHALL persist no plaintext password value.
+6. THE Auth_Service SHALL sign every issued JSON Web Token with the secret supplied by the Config_Loader, SHALL include the User identifier and Role as claims of that token, and SHALL set its expiry claim to exactly 8 hours after the issuance instant.
+7. WHEN a request to any route other than login carries a JSON Web Token whose signature verifies against the secret supplied by the Config_Loader and whose expiry claim is later than the current instant, THE Auth_Service SHALL attach the decoded User identifier and Role to the request context before the route handler executes.
+8. IF a request to any route other than login carries no JSON Web Token, THEN THE Auth_Service SHALL respond with HTTP 401 and the error code `UNAUTHENTICATED`, and SHALL leave the route handler unexecuted.
+9. IF a request to any route other than login carries a JSON Web Token whose structure cannot be decoded, whose signature verification fails, or whose expiry claim is equal to or earlier than the current instant, THEN THE Auth_Service SHALL respond with HTTP 401 and the error code `UNAUTHENTICATED`, and SHALL leave the route handler unexecuted.
+10. THE Auth_Service SHALL use the error code `INVALID_CREDENTIALS` for rejected login requests and the error code `UNAUTHENTICATED` for rejected token validations, so that the Web_Client can distinguish a bad login from an expired session.
+11. IF a login request omits the email field or the password field, supplies either field as an empty or whitespace-only string, supplies an email longer than 254 characters, or supplies a password longer than 72 characters, THEN THE Validation_Layer SHALL respond with HTTP 400 and the error code `VALIDATION_ERROR`, SHALL issue no JSON Web Token, and SHALL leave the login route handler unexecuted.
+
+### Requirement 2: Role-Based Authorization
+
+**User Story:** As an Admin, I want every restricted operation to be checked on the backend against the caller's Role, so that permissions cannot be bypassed by calling the API directly.
+
+#### Acceptance Criteria
+
+1. WHEN a request reaches a route of the API_Server that creates, modifies, or deletes any document (a write route), THE Authorization_Middleware SHALL evaluate the Role attached to the request context by the Auth_Service against the permitted Role set declared for that route before the route handler executes, and SHALL evaluate only requests to which the Auth_Service has already attached a Role, so that a request carrying no valid token is rejected with HTTP 401 by the Auth_Service before any Role evaluation occurs.
+2. WHEN a User whose Role is `Admin` submits a Work_Order creation request, THE Authorization_Middleware SHALL pass the request unchanged to the Work_Order_Service.
+3. IF a User whose Role is not `Admin` submits a Work_Order creation request, THEN THE Authorization_Middleware SHALL respond with HTTP 403, the error code `FORBIDDEN`, and a message indicating that the Role of the caller is not permitted for the requested operation, and SHALL create or modify no document in any collection.
+4. WHEN a User whose Role is `OperationsUser` or `Admin` submits an Inventory_Record creation, Inventory_Record adjustment, Internal_Transfer creation, Internal_Transfer dispatch, or Internal_Transfer receipt request, THE Authorization_Middleware SHALL pass the request unchanged to the Inventory_Service or the Transfer_Service.
+5. IF a User whose Role is neither `OperationsUser` nor `Admin` submits an Inventory_Record creation, Inventory_Record adjustment, Internal_Transfer creation, Internal_Transfer dispatch, or Internal_Transfer receipt request, THEN THE Authorization_Middleware SHALL respond with HTTP 403, the error code `FORBIDDEN`, and a message indicating that the Role of the caller is not permitted for the requested operation, and SHALL create or modify no Inventory_Record, Internal_Transfer, or Inventory_Transaction document.
+6. WHEN a User whose Role is `SalesUser` or `Admin` submits a Customer_Order creation request, THE Authorization_Middleware SHALL pass the request unchanged to the Order_Service.
+7. IF a User whose Role is neither `SalesUser` nor `Admin` submits a Customer_Order creation request, THEN THE Authorization_Middleware SHALL respond with HTTP 403, the error code `FORBIDDEN`, and a message indicating that the Role of the caller is not permitted for the requested operation, and SHALL create or modify no Customer_Order, Inventory_Record, or Inventory_Transaction document.
+8. THE Authorization_Middleware SHALL declare exactly one entry in a single route-to-Role mapping for each write route of the API_Server, naming every Role permitted to reach that route, so that adding a Role or a write route requires editing only that mapping.
+9. THE Web_Client SHALL render no navigation entry and no action control that submits a write request for which the Role of the current session is not named in the permitted Role set of the corresponding route.
+10. WHILE the Web_Client holds no confirmed Role for the current session, THE Web_Client SHALL render only the Login screen form and SHALL render no navigation entry and no action control of the Inventory, Work Orders, Internal Transfers, or Customer Orders screens.
+11. IF a write request reaches the Authorization_Middleware for a route that has no entry in the route-to-Role mapping, THEN THE Authorization_Middleware SHALL respond with HTTP 403, the error code `FORBIDDEN`, and SHALL create or modify no document in any collection.
+12. IF a request reaches the Authorization_Middleware carrying a Role value that is not one of `Admin`, `OperationsUser`, or `SalesUser`, THEN THE Authorization_Middleware SHALL respond with HTTP 403, the error code `FORBIDDEN`, and SHALL create or modify no document in any collection.
+13. WHEN a request that creates, modifies, and deletes no document carries a Role that is one of `Admin`, `OperationsUser`, or `SalesUser`, THE Authorization_Middleware SHALL pass the request unchanged to the requested route handler.
+14. THE Authorization_Middleware SHALL name in the route-to-Role mapping the permitted Role set of the Work_Order_Status change route, so that no write route relies on the deny-by-default behavior of criterion 11 at run time.
+
+### Requirement 3: Inventory Data Model and Derived Quantities
+
+**User Story:** As an Operations_User, I want inventory tracked per Item, Location, and Batch with a correctly derived available quantity, so that I can trust what the system says is free to promise.
+
+#### Acceptance Criteria
+
+1. THE Inventory_Service SHALL model each Inventory_Record with an Item reference, a Location reference, a Batch identifier of 1 to 32 characters, a Physical_Quantity, and a Reserved_Quantity, where Physical_Quantity and Reserved_Quantity are each integers from 0 to 999,999,999.
+2. THE Inventory_Service SHALL model the Item reference of an Inventory_Record, the Location reference of an Inventory_Record, and the Category reference of an Item as ObjectId references to documents in the corresponding collection rather than as duplicated copies of those documents.
+3. WHEN a client reads an Inventory_Record, THE Inventory_Service SHALL report its Available_Quantity as `Physical_Quantity - Reserved_Quantity` computed at read time from the stored Physical_Quantity and Reserved_Quantity rather than from a separately stored quantity field.
+4. WHEN a client reads an Inventory_Record whose Physical_Quantity is 100 and whose Reserved_Quantity is 30, THE Inventory_Service SHALL report an Available_Quantity of 70.
+5. WHEN a client reads the Location_Available_Quantity of an Item at a Location, THE Inventory_Service SHALL report it as the sum of Available_Quantity across every Inventory_Record for that Item and that Location, irrespective of Batch identifier.
+6. THE Database SHALL enforce a unique index on the combination of Item reference, Location reference, and Batch identifier of the Inventory_Record collection, comparing Batch identifiers exactly after leading and trailing whitespace has been removed.
+7. IF an Inventory_Record creation request names an Item reference, Location reference, and Batch identifier combination that already exists, THEN THE Inventory_Service SHALL respond with HTTP 409 and the error code `DUPLICATE_INVENTORY_RECORD`, and SHALL create no Inventory_Record and leave every existing Inventory_Record document unchanged.
+8. FOR ALL Inventory_Record documents at every point at which no Transaction is in progress, THE Inventory_Service SHALL hold `Physical_Quantity >= 0`, `Reserved_Quantity >= 0`, and `Reserved_Quantity <= Physical_Quantity` (invariant property).
+9. FOR ALL Inventory_Record documents at every point at which no Transaction is in progress, THE Inventory_Service SHALL hold `Available_Quantity == Physical_Quantity - Reserved_Quantity` and `Available_Quantity >= 0` (invariant property).
+10. WHEN an Inventory_Record creation request names an existing Item reference, an existing Location reference, a Batch identifier of 1 to 32 characters, and a Physical_Quantity that is an integer from 0 to 999,999,999, THE Inventory_Service SHALL create the Inventory_Record with the supplied Physical_Quantity and a Reserved_Quantity of 0.
+11. IF an Inventory_Record creation request names an Item reference or a Location reference that matches no existing document, THEN THE Inventory_Service SHALL respond with HTTP 400, the error code `INVALID_REFERENCE`, and SHALL create no Inventory_Record.
+12. IF a client reads the Location_Available_Quantity of an Item at a Location for which no Inventory_Record exists, THEN THE Inventory_Service SHALL report a Location_Available_Quantity of 0 rather than responding with the error code `NOT_FOUND`.
+
+### Requirement 4: Inventory Mutation Guards
+
+**User Story:** As an Operations_User, I want the backend to reject invalid or repeated stock movements, so that inventory data cannot drift into an impossible state.
+
+#### Acceptance Criteria
+
+1. IF a request that changes Physical_Quantity or Reserved_Quantity supplies a Quantity that is not an integer, is less than 1, or is greater than 1,000,000, THEN THE Validation_Layer SHALL respond with HTTP 400, the error code `INVALID_QUANTITY`, SHALL leave every Inventory_Record document unchanged, and SHALL write no Inventory_Transaction document.
+2. IF an applied stock movement would set the Physical_Quantity of an Inventory_Record below 0, THEN THE Inventory_Service SHALL abort the enclosing Transaction, respond with HTTP 409, return the error code `INSUFFICIENT_PHYSICAL_QUANTITY`, and SHALL leave every Inventory_Record document and every Inventory_Transaction document unchanged.
+3. IF an applied stock movement would set the Reserved_Quantity of an Inventory_Record above its Physical_Quantity, THEN THE Inventory_Service SHALL abort the enclosing Transaction, respond with HTTP 409, return the error code `INSUFFICIENT_AVAILABLE_QUANTITY`, and SHALL leave every Inventory_Record document and every Inventory_Transaction document unchanged.
+4. WHEN a change to an Inventory_Record is applied, THE Inventory_Service SHALL write, inside the same Transaction as that change, exactly one Inventory_Transaction document recording the affected Inventory_Record, the signed Physical_Quantity delta, the signed Reserved_Quantity delta, the Movement_Reference of the causing action, and the time at which the change was applied.
+5. THE Database SHALL enforce a unique index on the Movement_Reference field of the Inventory_Transaction collection.
+6. IF a stock movement is submitted whose Movement_Reference matches the Movement_Reference of an existing Inventory_Transaction document, or whose Inventory_Transaction write is rejected by that unique index during commit, THEN THE Inventory_Service SHALL abort the enclosing Transaction, respond with HTTP 409, the error code `DUPLICATE_INVENTORY_TRANSACTION`, SHALL leave every Inventory_Record document unchanged, and SHALL add no Inventory_Transaction document.
+7. FOR ALL Inventory_Record documents at every point at which no Transaction is in progress, THE Inventory_Service SHALL hold that the Physical_Quantity of an Inventory_Record equals the sum of the signed Physical_Quantity deltas of the Inventory_Transaction documents referencing that Inventory_Record, including the opening Inventory_Transaction written at its creation, and that the Reserved_Quantity of an Inventory_Record equals the sum of the signed Reserved_Quantity deltas of those same documents (ledger reconstruction property).
+8. IF a request that changes Physical_Quantity or Reserved_Quantity omits the Quantity value or omits the Movement_Reference, or supplies a Movement_Reference that is not a non-empty string, THEN THE Validation_Layer SHALL respond with HTTP 400 and the error code `VALIDATION_ERROR` naming each rejected field and the reason for its rejection, SHALL leave every Inventory_Record document unchanged, and SHALL write no Inventory_Transaction document.
+9. WHEN an Inventory_Record is created, THE Inventory_Service SHALL write, inside the same Transaction as the creation, one opening Inventory_Transaction document whose Physical_Quantity delta equals the initial Physical_Quantity of that Inventory_Record, whose Reserved_Quantity delta is 0, and which carries the Movement_Reference of the creating action.
+10. THE Inventory_Service SHALL expose no operation that updates or deletes an existing Inventory_Transaction document, so that a written Inventory_Transaction can only be corrected by appending a further Inventory_Transaction (append-only property).
+
+### Requirement 5: Work Order Management and Material Shortage Calculation
+
+**User Story:** As an Admin, I want to create Work Orders that automatically report the material shortage at the target Location, so that operations know what still has to be sourced.
+
+#### Acceptance Criteria
+
+1. WHEN an Admin submits a Work_Order creation request naming a Location, an Item, a Valid_Quantity as Required_Quantity, and an Assigned_User, THE Work_Order_Service SHALL create a Work_Order with a system-generated Work_Order identifier and Work_Order_Status `Assigned`, and SHALL respond with HTTP 201, that Work_Order identifier, that Work_Order_Status, the creation timestamp, and the Shortage_Quantity of that Work_Order.
+2. IF a Work_Order creation request supplies a Required_Quantity that is not an integer, or is less than 1, or is greater than 1,000,000, THEN THE Validation_Layer SHALL respond with HTTP 400, the error code `INVALID_QUANTITY`, and SHALL create no Work_Order.
+3. IF any Work_Order creation request names a Location reference, Item reference, or Assigned_User reference that matches no existing document, THEN THE Work_Order_Service SHALL respond with HTTP 400, the error code `INVALID_REFERENCE`, and SHALL create no Work_Order, irrespective of the Role of the requesting User.
+4. WHEN a client reads a Work_Order, THE Work_Order_Service SHALL report the Location_Available_Quantity of the Work_Order Item at the Work_Order Location and the Shortage_Quantity computed as `max(0, Required_Quantity - Location_Available_Quantity)` from the Inventory_Record documents current at that read rather than from a stored copy, treating the Location_Available_Quantity as 0 when no Inventory_Record exists for that Item and Location.
+5. WHILE a Work_Order has a Required_Quantity of 100 and the Location_Available_Quantity of its Item at its Location is 60, THE Work_Order_Service SHALL report a Shortage_Quantity of 40.
+6. WHILE the Location_Available_Quantity of a Work_Order Item at its Location is greater than or equal to the Work_Order Required_Quantity, THE Work_Order_Service SHALL report a Shortage_Quantity of 0.
+7. WHEN a Work_Order_Status change request moves a Work_Order from `Assigned` to `InProgress` or from `InProgress` to `Completed`, THE Work_Order_Service SHALL apply the new Work_Order_Status, record the timestamp of that accepted change on the Work_Order, and respond with HTTP 200, the Work_Order identifier, the new Work_Order_Status, and that timestamp.
+8. THE Work_Order_Service SHALL apply every Work_Order_Status change through one guarded transition function, so that any attempted change reaching a Work_Order document is evaluated against the permitted transition set.
+9. IF a Work_Order_Status change reaching the Work_Order_Service names a target Work_Order_Status that is not the successor of the current Work_Order_Status in the order `Assigned`, `InProgress`, `Completed`, including a target equal to the current Work_Order_Status and any target requested for a Work_Order whose current Work_Order_Status is the terminal value `Completed`, THEN THE Work_Order_Service SHALL respond with HTTP 409, the error code `INVALID_STATUS_TRANSITION`, and SHALL leave the Work_Order_Status and the recorded change timestamp unchanged.
+10. FOR ALL Work_Order documents, THE Work_Order_Service SHALL report a Shortage_Quantity that is greater than or equal to 0 and less than or equal to the Work_Order Required_Quantity (bounded derivation property).
+11. IF a Work_Order_Status change request names a target Work_Order_Status that is not one of `Assigned`, `InProgress`, or `Completed`, THEN THE Validation_Layer SHALL respond with HTTP 400, the error code `VALIDATION_ERROR`, and SHALL leave every Work_Order document unchanged.
+12. IF a Work_Order read request or a Work_Order_Status change request names a Work_Order identifier that matches no existing Work_Order, THEN THE Work_Order_Service SHALL respond with HTTP 404, the error code `NOT_FOUND`, and SHALL leave every Work_Order document unchanged.
+
+### Requirement 6: Internal Stock Transfer Lifecycle
+
+**User Story:** As an Operations_User, I want to move stock between Locations through a requested, dispatched, and received lifecycle, so that in-transit stock is never double counted.
+
+#### Acceptance Criteria
+
+1. WHEN an Operations_User submits an Internal_Transfer creation request naming a Source_Location, a Destination_Location that differs from the Source_Location, an Item, a Batch for which an Inventory_Record with that Item and Source_Location exists, and a Valid_Quantity, THE Transfer_Service SHALL create an Internal_Transfer with a system-generated Transfer identifier, Transfer_Status `Requested`, a Received_Quantity of 0, and a creation timestamp, and SHALL respond with HTTP 201 and that Transfer identifier.
+2. IF an Internal_Transfer creation request names a Destination_Location equal to its Source_Location, THEN THE Transfer_Service SHALL respond with HTTP 400, the error code `SAME_LOCATION_TRANSFER`, and SHALL create no Internal_Transfer.
+3. WHILE an Internal_Transfer holds Transfer_Status `Requested`, THE Transfer_Service SHALL apply no change to the Physical_Quantity or Reserved_Quantity of any Inventory_Record at its Source_Location or Destination_Location on behalf of that Internal_Transfer, and SHALL write no Inventory_Transaction document referencing that Internal_Transfer.
+4. WHEN a dispatch request is submitted for an Internal_Transfer whose Transfer_Status is `Requested` and whose Quantity is less than or equal to the Available_Quantity of the Inventory_Record for its Item, Source_Location, and Batch, THE Transfer_Service SHALL, inside one Transaction, reduce the Physical_Quantity of that Inventory_Record by the Internal_Transfer Quantity, write one Inventory_Transaction document carrying the Movement_Reference of that dispatch step, set the Transfer_Status to `Dispatched` with a dispatch timestamp, and respond with HTTP 200.
+5. IF a dispatch request is submitted for an Internal_Transfer whose Quantity exceeds the Available_Quantity of the Inventory_Record for its Item, Source_Location, and Batch, including the case in which no such Inventory_Record exists and the Available_Quantity is therefore 0, THEN THE Transfer_Service SHALL abort the Transaction, respond with HTTP 409 and the error code `INSUFFICIENT_AVAILABLE_QUANTITY`, leave every Inventory_Record document unchanged, write no Inventory_Transaction document, and leave the Transfer_Status at `Requested`.
+6. WHILE an Internal_Transfer holds Transfer_Status `Dispatched`, THE Transfer_Service SHALL apply no change to the Physical_Quantity of any Inventory_Record for its Item at its Destination_Location on behalf of that Internal_Transfer.
+7. WHEN a receipt request is submitted for an Internal_Transfer whose Transfer_Status is `Dispatched`, THE Transfer_Service SHALL, inside one Transaction, increase the Physical_Quantity of the Inventory_Record for the Item, Destination_Location, and Batch of the Internal_Transfer by the Internal_Transfer Quantity, write one Inventory_Transaction document carrying the Movement_Reference of that receipt step, set the Received_Quantity to the Internal_Transfer Quantity, set the Transfer_Status to `Received` with a receipt timestamp, and respond with HTTP 200.
+8. WHEN a receipt request is accepted for an Internal_Transfer whose Item, Destination_Location, and Batch combination matches no Inventory_Record, THE Transfer_Service SHALL create that Inventory_Record with a Physical_Quantity equal to the Internal_Transfer Quantity and a Reserved_Quantity of 0, inside the same Transaction as the receipt.
+9. IF a receipt request is submitted for an Internal_Transfer that already holds Transfer_Status `Received`, THEN THE Transfer_Service SHALL respond with HTTP 409 and the error code `TRANSFER_ALREADY_RECEIVED`, leave the Physical_Quantity and Reserved_Quantity of every Inventory_Record unchanged, write no additional Inventory_Transaction document, and leave the Transfer_Status at `Received` and the Received_Quantity unchanged (idempotence property).
+10. IF a dispatch request or a receipt request is submitted for an Internal_Transfer whose current Transfer_Status is not the immediate predecessor of the requested Transfer_Status in the order `Requested`, `Dispatched`, `Received`, other than the receipt-against-`Received` case covered by criterion 9, THEN THE Transfer_Service SHALL respond with HTTP 409, the error code `INVALID_STATUS_TRANSITION`, and SHALL leave every Inventory_Record document and the Transfer_Status unchanged.
+11. FOR ALL Internal_Transfer documents that reach Transfer_Status `Received`, THE Transfer_Service SHALL hold that the total Physical_Quantity of the Item across the Source_Location and the Destination_Location after receipt equals the total before dispatch, measured over an interval in which no other stock movement for that Item is accepted (quantity conservation property).
+12. FOR ALL sequences of receipt requests submitted for one Internal_Transfer, THE Transfer_Service SHALL apply exactly one receipt, write at most one Inventory_Transaction document for the receipt step of that Internal_Transfer, and produce the same Inventory_Record state as a single accepted receipt request (idempotence property).
+13. IF an Internal_Transfer creation request supplies a Quantity that is not an integer, is less than 1, or is greater than 1,000,000, THEN THE Validation_Layer SHALL respond with HTTP 400, the error code `INVALID_QUANTITY`, and SHALL create no Internal_Transfer.
+14. IF an Internal_Transfer creation request names a Source_Location reference, Destination_Location reference, or Item reference that matches no existing document, or names an Item, Source_Location, and Batch combination that matches no existing Inventory_Record, THEN THE Transfer_Service SHALL respond with HTTP 400, the error code `INVALID_REFERENCE`, and SHALL create no Internal_Transfer.
+15. IF a dispatch request or a receipt request names a Transfer identifier that matches no Internal_Transfer document, THEN THE Transfer_Service SHALL respond with HTTP 404, the error code `NOT_FOUND`, and SHALL leave every Inventory_Record and Internal_Transfer document unchanged.
+16. WHEN two receipt requests for one Internal_Transfer are submitted such that neither awaits the response of the other, THE Transfer_Service SHALL commit exactly one of them and SHALL respond to the other with HTTP 409 and the error code `TRANSFER_ALREADY_RECEIVED`.
+
+### Requirement 7: Customer Order and Stock Reservation
+
+**User Story:** As a Sales_User, I want to reserve stock when I create a customer order, so that promised units cannot be sold twice.
+
+#### Acceptance Criteria
+
+1. WHEN a Sales_User submits a Customer_Order creation request naming a customer name, an Item, a Location, and a Valid_Quantity that is less than or equal to the Location_Available_Quantity of that Item at that Location, THE Order_Service SHALL, inside one Transaction, increase the Reserved_Quantity of the Inventory_Record documents for that Item and Location in ascending Batch identifier order, consuming the full Available_Quantity of each matched Inventory_Record before moving to the next until the requested Quantity is fully reserved, write one Inventory_Transaction document for each Inventory_Record it changed, and create a Customer_Order with a system-generated Customer_Order identifier, Customer_Order_Status `Reserved`, and one Reservation_Entry per changed Inventory_Record.
+2. WHEN a Customer_Order reserves 60 units of an Item whose Inventory_Record holds a Physical_Quantity of 100 and a Reserved_Quantity of 0, THE Inventory_Service SHALL subsequently report a Physical_Quantity of 100, a Reserved_Quantity of 60, and an Available_Quantity of 40 for that Inventory_Record.
+3. IF a Customer_Order creation request names a Quantity that exceeds the Location_Available_Quantity of its Item at its Location, including the case in which no Inventory_Record exists for that Item and Location and the Location_Available_Quantity is therefore 0, THEN THE Order_Service SHALL abort the Transaction, respond with HTTP 409, the error code `INSUFFICIENT_AVAILABLE_QUANTITY`, create no Customer_Order, write no Inventory_Transaction document, and leave every Inventory_Record document unchanged.
+4. THE Order_Service SHALL apply every Reserved_Quantity increase inside the enclosing Transaction through a conditional Database update whose filter requires that the resulting Reserved_Quantity remains less than or equal to the Physical_Quantity of the matched Inventory_Record, SHALL base the reservation decision on the match result of that conditional update rather than on any value read before it, and SHALL treat a conditional update that matches no Inventory_Record as a reservation failure that aborts that Transaction.
+5. WHEN two or more Customer_Order creation requests for the same Item and Location are processed such that their Transactions overlap in time, and the sum of their requested Quantities exceeds the Location_Available_Quantity measured before those requests were submitted, THE Order_Service SHALL commit only those requests whose conditional Reserved_Quantity updates all matched an Inventory_Record, and SHALL respond to every other request with HTTP 409, the error code `INSUFFICIENT_AVAILABLE_QUANTITY`, and no created Customer_Order.
+6. WHEN the Location_Available_Quantity of an Item at a Location is 100, one Customer_Order creation request reserves 80, and a concurrent Customer_Order creation request reserves 50, THE Order_Service SHALL commit exactly one of those two requests and SHALL respond to the other with HTTP 409 and the error code `INSUFFICIENT_AVAILABLE_QUANTITY`.
+7. FOR ALL sets of concurrently submitted Customer_Order creation requests against one Item and Location, THE Order_Service SHALL hold that the sum of the Quantity values of the committed Customer_Order documents is less than or equal to the Location_Available_Quantity measured before those requests were submitted (concurrency safety property).
+8. FOR ALL orderings in which one set of Customer_Order creation requests is processed, THE Order_Service SHALL produce the same final total Reserved_Quantity for the affected Item and Location when the same subset of requests commits (confluence property).
+9. IF a Customer_Order creation request supplies a Quantity that is not an integer, is less than 1, or is greater than 1,000,000, THEN THE Validation_Layer SHALL respond with HTTP 400, the error code `INVALID_QUANTITY`, and SHALL create no Customer_Order and leave every Inventory_Record document unchanged.
+10. IF a Customer_Order creation request names an Item reference or a Location reference that matches no existing document, THEN THE Order_Service SHALL respond with HTTP 400, the error code `INVALID_REFERENCE`, and SHALL create no Customer_Order and leave every Inventory_Record document unchanged.
+11. IF a Customer_Order creation request supplies a customer name that is absent, or whose trimmed length is less than 1 character or greater than 120 characters, THEN THE Validation_Layer SHALL respond with HTTP 400, the error code `VALIDATION_ERROR`, and SHALL create no Customer_Order and leave every Inventory_Record document unchanged.
+12. IF a Customer_Order read request names a Customer_Order identifier that matches no Customer_Order document, THEN THE Order_Service SHALL respond with HTTP 404 and the error code `NOT_FOUND`.
+
+### Requirement 8: Transactional Atomicity
+
+**User Story:** As a reviewer, I want every multi-document stock movement to commit or abort as a whole, so that the ledger and the inventory balances can never disagree.
+
+#### Acceptance Criteria
+
+1. THE API_Server SHALL execute every operation that writes to more than one document, including Internal_Transfer dispatch, Internal_Transfer receipt, Customer_Order reservation, and every Inventory_Record change that also writes an Inventory_Transaction, inside a single Transaction on one MongoDB client session that commits all writes of that operation with one commit.
+2. IF any write inside a Transaction fails, THEN THE API_Server SHALL abort that Transaction, leave every document that the Transaction touched at its exact pre-Transaction value, persist no Inventory_Transaction document written by that Transaction, and respond with the error code carried by the failing write or, where the failing write carries none, with HTTP 500 and the error code `INTERNAL_ERROR`.
+3. THE API_Server SHALL end the MongoDB client session of a Transaction after commit, after abort, and after an unhandled error inside the Transaction, by ending the session in a `finally` block that runs on every exit path, so that the count of open MongoDB client sessions after the HTTP response is sent equals the count before that request was received.
+4. WHEN the API_Server process receives a `SIGINT` or `SIGTERM` signal, THE API_Server SHALL abort every in-progress Transaction, end every open MongoDB client session, close the Database connection, and exit with status code 0 within 10 seconds of receiving the signal, and SHALL exit with a non-zero status code if that shutdown sequence has not completed within those 10 seconds.
+5. IF the Database rejects a Transaction with an error that the Database labels as transient, THEN THE API_Server SHALL re-execute that Transaction from its first read at most 3 times, for at most 4 executions of that Transaction in total, SHALL respond with the success response of the operation if any of those executions commits, and SHALL respond with HTTP 409 and the error code `CONCURRENT_MODIFICATION` if the fourth execution also fails.
+6. THE Documentation_Set SHALL state that the Database runs as a replica set because MongoDB multi-document transactions require one, and SHALL state the maximum of 3 retries applied to transient transaction errors.
+7. WHILE a Transaction is in progress, THE API_Server SHALL report the pre-Transaction value of every document that the Transaction has written to every read request served outside that Transaction.
+8. FOR ALL Transactions that abort, THE API_Server SHALL hold that the Physical_Quantity and the Reserved_Quantity of every Inventory_Record touched by that Transaction, and the set of Inventory_Transaction documents, equal their pre-Transaction values (atomicity property).
+
+### Requirement 9: Validation, Error Handling, and API Surface
+
+**User Story:** As a frontend developer, I want a consistent validated REST API with predictable error responses, so that the Web_Client can display accurate messages.
+
+#### Acceptance Criteria
+
+1. THE Validation_Layer SHALL validate every field of every incoming request body, path parameter, and query string against a declared schema before the route handler executes, checking for each field its declared presence, its declared type, and its declared value range.
+2. THE Validation_Layer SHALL reject any request body field that the declared schema does not name, so that undeclared fields never reach a route handler.
+3. WHEN a request payload satisfies its declared schema, THE Validation_Layer SHALL pass the request to the route handler with the validated payload attached, with each field coerced to its declared type and every leading and trailing whitespace character removed from each string field.
+4. IF a request payload fails schema validation, THEN THE Validation_Layer SHALL respond with HTTP 400, the error code `VALIDATION_ERROR`, and one entry per rejected field naming that field and the reason for its rejection, SHALL leave the route handler unexecuted, and SHALL leave every document unchanged.
+5. THE Error_Handler SHALL respond to every request that it rejects with HTTP status 400 or above with a JSON body containing a non-empty `code` string field drawn from the declared error code set and a non-empty human-readable `message` string field.
+6. IF a route handler throws an error that carries no explicit HTTP status, THEN THE Error_Handler SHALL respond with HTTP 500, the error code `INTERNAL_ERROR`, and a message that names no Database detail, file path, or module name.
+7. THE Error_Handler SHALL omit stack traces and raw Database error text from every HTTP response body.
+8. WHEN the API_Server finishes writing a response, THE API_Server SHALL write one line to standard output containing the request method, the request path, the resulting HTTP status, and the error code when the status is 400 or above.
+9. WHEN a client requests a document identifier that is well formed and matches no document, THE API_Server SHALL respond with HTTP 404, the error code `NOT_FOUND`, and SHALL leave every document unchanged.
+10. IF a request supplies a document identifier that is not a 24-character hexadecimal string, THEN THE Validation_Layer SHALL respond with HTTP 400, the error code `INVALID_IDENTIFIER`, and SHALL leave the route handler unexecuted.
+11. IF a request declares a JSON content type and carries a body that cannot be parsed as JSON, THEN THE Error_Handler SHALL respond with HTTP 400, the error code `MALFORMED_JSON`, and SHALL leave the route handler unexecuted.
+12. IF a request names a path and method combination that matches no declared route, THEN THE API_Server SHALL respond with HTTP 404 and the error code `ROUTE_NOT_FOUND`.
+
+### Requirement 10: Configuration and Portability
+
+**User Story:** As a reviewer, I want the application configured entirely through environment variables, so that it runs on any host without code changes.
+
+#### Acceptance Criteria
+
+1. WHEN the API_Server process starts, THE Config_Loader SHALL read exactly four required environment variables, holding the Database connection string, the JSON Web Token secret, the API_Server port, and the permitted Web_Client origin, before the Database connection is opened and before the API_Server port is bound.
+2. IF at least one environment variable that the Config_Loader marks as required is absent, empty, or contains only whitespace at process startup, THEN THE Config_Loader SHALL write the names of all such variables to standard error in a single message and exit the process with a non-zero status code before opening the Database connection and before binding the API_Server port.
+3. THE Config_Loader SHALL apply no default value to any environment variable that it marks as required.
+4. THE Config_Loader SHALL expose configuration values to the rest of the API_Server through one module, so that no other module reads `process.env` directly.
+5. THE Config_Loader SHALL base its startup decision only on the presence and the declared value constraints of the required environment variables, and on no host name, absolute file path, or operating system value, so that startup succeeds on any host whenever every required variable is supplied within its declared constraints.
+6. THE Mini_Operations_ERP SHALL express business logic in provider-neutral JavaScript modules that depend on no hosting-provider software development kit.
+7. THE Documentation_Set SHALL list every environment variable that the Mini_Operations_ERP reads, and for each one SHALL state its purpose, whether it is required, its permitted value range, and one example value that is not a working credential.
+8. WHEN the Web_Client is built, THE Web_Client SHALL read the API_Server base URL from a build-time environment variable and SHALL contain no hard-coded fallback base URL.
+9. IF the value of the API_Server port variable is not a decimal integer between 1 and 65535 inclusive, THEN THE Config_Loader SHALL write an error to standard error naming that variable and exit the process with a non-zero status code before binding the API_Server port.
+10. IF the value of the JSON Web Token secret variable is shorter than 32 characters, THEN THE Config_Loader SHALL write an error to standard error naming that variable and exit the process with a non-zero status code before binding the API_Server port.
+11. IF the build-time API_Server base URL variable is absent, empty, or contains only whitespace when the Web_Client build runs, THEN THE Web_Client build SHALL terminate with a non-zero status code and an error naming that variable.
+
+### Requirement 11: Frontend Screens and API Integration
+
+**User Story:** As a User, I want five working screens wired to the backend APIs, so that I can complete the whole business flow through the browser.
+
+#### Acceptance Criteria
+
+1. THE Web_Client SHALL provide exactly five screens, being Login, Inventory, Work Orders, Internal Transfers, and Customer Orders, and SHALL provide no sixth screen.
+2. WHEN a User submits the Login screen form and the Auth_Service accepts the submitted credentials, THE Web_Client SHALL store the returned JSON Web Token and the returned Role for the current session and SHALL display the Inventory screen.
+3. WHILE the Web_Client holds a stored JSON Web Token, WHEN the Web_Client issues any API request other than login, THE Web_Client SHALL attach the stored JSON Web Token to the request Authorization header.
+4. IF the API_Server responds to any Web_Client request with HTTP 401, THEN THE Web_Client SHALL discard the stored JSON Web Token and the stored Role, display the Login screen with a message indicating that the session has ended, and issue no further API request other than login until a subsequent login is accepted.
+5. WHEN the Inventory screen opens, THE Web_Client SHALL request the Inventory_Record list from the Inventory_Service and SHALL display one row per returned Inventory_Record showing the Item, Category, Location, Batch, Physical_Quantity, Reserved_Quantity, and Available_Quantity values of that Inventory_Record.
+6. WHEN the Work Orders screen opens, THE Web_Client SHALL request the Work_Order list from the Work_Order_Service and SHALL display one row per returned Work_Order showing the Work_Order identifier, Location, Item, Required_Quantity, Assigned_User, Work_Order_Status, and Shortage_Quantity values of that Work_Order.
+7. WHILE the Role of the current session is `Admin` and the Work Orders screen is displayed, THE Web_Client SHALL display the Work_Order creation form, and WHILE the Role of the current session is not `Admin`, THE Web_Client SHALL display no Work_Order creation form.
+8. WHEN the Internal Transfers screen opens, THE Web_Client SHALL request the Internal_Transfer list from the Transfer_Service and SHALL display one row per returned Internal_Transfer showing the Transfer identifier, Source_Location, Destination_Location, Item, Batch, Quantity, and Transfer_Status values of that Internal_Transfer.
+9. WHILE the Role of the current session is `OperationsUser` or `Admin` and the Internal Transfers screen is displayed, THE Web_Client SHALL display a dispatch control on each row whose Transfer_Status is `Requested` and a receipt control on each row whose Transfer_Status is `Dispatched`, and SHALL display neither control on a row whose Transfer_Status is `Received`.
+10. WHEN the Customer Orders screen opens, THE Web_Client SHALL request the Customer_Order list from the Order_Service and SHALL display one row per returned Customer_Order showing the customer name, Item, Location, Quantity, and Customer_Order_Status values of that Customer_Order.
+11. WHILE a Sales_User is viewing the Customer Orders screen, THE Web_Client SHALL display the Customer_Order creation form on that screen only, so that the form appears on no other screen.
+12. IF the API_Server responds to a Web_Client request with an HTTP status other than 401 and a body carrying a `code` field, THEN THE Web_Client SHALL display the `message` field of that response on the screen that originated the request and SHALL leave every displayed value on that screen at the value shown before the request was issued.
+13. WHILE an API request issued by the Web_Client is in flight, THE Web_Client SHALL disable the control that initiated that request, and SHALL re-enable that control when the response is received.
+14. WHEN the API_Server responds with a success status to a write request issued from a screen, THE Web_Client SHALL refetch the list displayed on that screen and display the refetched values, so that the displayed quantities and statuses equal the values in the refetched API_Server response.
+15. IF a list request issued by the Web_Client returns zero records, THEN THE Web_Client SHALL display no data rows and SHALL display a message on that screen indicating that no records exist.
+16. IF a User submits the Login screen form and the Auth_Service rejects the submitted credentials, THEN THE Web_Client SHALL keep the Login screen displayed, store no JSON Web Token, retain the submitted email value in the form, and display a message indicating that the credentials were rejected.
+17. IF a User opens any screen other than Login while the Web_Client holds no stored JSON Web Token, THEN THE Web_Client SHALL display the Login screen and SHALL issue no API request for the requested screen.
+
+### Requirement 12: Automated Tests
+
+**User Story:** As a reviewer, I want automated tests that prove the critical business rules, so that correctness is demonstrated rather than claimed.
+
+#### Acceptance Criteria
+
+1. THE Test_Suite SHALL include a test asserting that a Customer_Order creation request for a Quantity exceeding the Location_Available_Quantity of its Item at its Location receives HTTP 409 with the error code `INSUFFICIENT_AVAILABLE_QUANTITY`, that no Customer_Order document exists for that request, and that the Reserved_Quantity of every affected Inventory_Record equals the value read immediately before the request (mandatory test 1).
+2. THE Test_Suite SHALL include a test asserting that an Internal_Transfer dispatch request for a Quantity exceeding the Available_Quantity of the Inventory_Record at the Source_Location receives HTTP 409 with the error code `INSUFFICIENT_AVAILABLE_QUANTITY`, that the Source_Location Inventory_Record Physical_Quantity equals the value read immediately before the request, and that the Transfer_Status remains `Requested` (mandatory test 2).
+3. THE Test_Suite SHALL include a test that reads the Destination_Location Inventory_Record Physical_Quantity at three points, being before dispatch, while the Internal_Transfer holds Transfer_Status `Dispatched`, and after the Transfer_Status becomes `Received`, and asserts that the first two readings are equal and that the third reading equals the first reading plus the Internal_Transfer Quantity (mandatory test 3).
+4. THE Test_Suite SHALL include a test asserting that a second receipt request for an Internal_Transfer already holding Transfer_Status `Received` receives HTTP 409 with the error code `TRANSFER_ALREADY_RECEIVED` and that the Destination_Location Inventory_Record Physical_Quantity equals the value read after the first accepted receipt (mandatory test 4).
+5. THE Test_Suite SHALL include a test asserting that a User whose Role lacks permission for a restricted route receives HTTP 403 with the error code `FORBIDDEN` and that every field value of each targeted document equals the value read immediately before the request (mandatory test 5).
+6. THE Test_Suite SHALL include a test that submits two Customer_Order creation requests for the same Item and Location, each without awaiting the response of the other, whose Quantity sum exceeds the Location_Available_Quantity, and asserts that exactly one request receives HTTP 201, that the other receives HTTP 409 with the error code `INSUFFICIENT_AVAILABLE_QUANTITY`, that exactly one Customer_Order document exists for the pair, and that the total Reserved_Quantity for that Item and Location increased by exactly the Quantity of the committed request.
+7. THE Test_Suite SHALL include property-based tests that generate, for each asserted property, at least 25 cases consisting of sequences of 1 to 20 accepted inventory operations, that assert the invariant properties of Requirement 3, the ledger reconstruction property of Requirement 4, the quantity conservation and idempotence properties of Requirement 6, and the concurrency safety property of Requirement 7, and that report the generator seed of any failing case so the case can be re-executed.
+8. THE Test_Suite SHALL run against a MongoDB replica-set instance so that Transaction behavior is exercised rather than stubbed.
+9. IF the Test_Suite determines at startup that the configured Database is not a replica-set deployment, THEN THE Test_Suite SHALL write the reason to standard error and exit with a non-zero status code before executing any test.
+10. THE Test_Suite SHALL execute to completion through one documented command that requires no interactive input, and SHALL exit with status code 0 when every test passes.
+11. THE Test_Suite SHALL, before each test, remove every document from each collection it writes and load a fixed seed dataset containing at least one User for each Role, at least two Location documents, at least two Item documents, and at least two Inventory_Record documents with stated Physical_Quantity and Reserved_Quantity values, so that tests pass in any execution order.
+12. IF one or more tests fail, THEN THE Test_Suite SHALL report the name of each failing test together with its expected and actual values and SHALL exit with a non-zero status code.
+13. THE Test_Suite SHALL exercise each of mandatory tests 1 through 5 and the concurrency test by issuing HTTP requests to the API_Server routes rather than by invoking service functions directly, so that Authorization_Middleware, Validation_Layer, and Error_Handler behavior is included in each assertion.
+
+### Requirement 13: Submission Artifacts
+
+**User Story:** As an evaluator, I want the repository to carry setup documentation, a schema description, and API documentation, so that I can run and review the project without help.
+
+#### Acceptance Criteria
+
+1. THE Documentation_Set SHALL include a README stating the tech stack, the minimum Node.js version and the minimum MongoDB version required, the project setup steps as a numbered ordered list, the Database setup steps including the replica-set initialization step, the list of every environment variable, and the verbatim command to run the API_Server, the verbatim command to run the Web_Client, and the verbatim command to run the Test_Suite.
+2. THE Documentation_Set SHALL include a database schema document that lists, for every collection, every field with its type and whether it is required or optional, every reference field with the collection it points to, and every unique index, together with an entity relationship diagram whose text source is tracked in the repository.
+3. THE Documentation_Set SHALL include API documentation listing, for every route, its HTTP method, path, permitted Role set, request schema, success response schema with its HTTP status, every error code the route can return with the HTTP status carried by that error code, and one example request body and one example success response.
+4. THE Documentation_Set SHALL state that MongoDB replaces the relational database named in the case study brief, SHALL describe how ObjectId referenced relationships and multi-document transactions preserve the intent of that brief, and SHALL list the accepted trade-offs including referential integrity enforced by the application rather than by the Database and the replica-set deployment required for Transaction support.
+5. THE Documentation_Set SHALL document one seed command that requires no interactive input and that creates one Admin, one Operations_User, one Sales_User, at least two Location documents, at least one Category, at least two Item documents, at least one Work_Order whose Required_Quantity exceeds the Location_Available_Quantity of its Item at its Location so that a non-zero Shortage_Quantity is observable, and at least one Inventory_Record whose Available_Quantity is at least 1 unit at a Location usable as a Source_Location so that an Internal_Transfer can be dispatched.
+6. THE Documentation_Set SHALL record the demo video walkthrough order as Login, Inventory, Work Order shortage, Internal Transfer dispatch and receipt, and Customer Order reservation.
+7. WHEN a reviewer follows the README setup steps in the stated order on a host carrying only the stated minimum Node.js and MongoDB versions, THE Documentation_Set SHALL supply every command and configuration value needed to reach a running API_Server, a running Web_Client, and a completed Test_Suite run, so that no step depends on information absent from the Documentation_Set.
+8. THE Documentation_Set SHALL state the email address and the Role of every User created by the seed command and SHALL state the environment variable through which the password of each seeded User is supplied, so that a reviewer can authenticate without reading the seed source and no password value is stored in a tracked file.
+9. THE Documentation_Set SHALL list exactly the routes that the API_Server exposes, exactly the error codes that the Error_Handler returns, and exactly the environment variables that the Config_Loader marks as required, so that any mismatch between documentation and implementation is detectable by direct comparison.
+
+### Requirement 14: Incremental Delivery History
+
+**User Story:** As an evaluator, I want the repository to show how the project was built, so that I can see reasonable development history rather than one drop of code.
+
+#### Acceptance Criteria
+
+1. THE Mini_Operations_ERP SHALL be delivered as a sequence of at least 8 increments, each increment adding one of the authentication, inventory, work order, transfer, order reservation, frontend, testing, and documentation capabilities and leaving the Test_Suite passing when executed through the single documented command.
+2. WHEN an increment leaves the Test_Suite passing, THE Mini_Operations_ERP SHALL be committed with a message of 10 to 120 characters naming the capability that increment adds, and the commit SHALL be pushed to the default branch of the repository at `https://github.com/Varundhyani69/FundsRoomRound2` before work on the next increment begins.
+3. THE repository SHALL contain at least 10 commits on its default branch, at least one commit for each of the eight increments named in criterion 1, and no single commit introducing more than 3 of those eight capabilities.
+4. THE repository SHALL exclude every run-time environment file from version control through a `.gitignore` entry, so that no environment file carrying a secret value is tracked.
+5. THE repository SHALL carry no secret value in any tracked file, including source modules, configuration files, test fixtures, and documentation, where a secret value is a database connection string containing credentials, a token signing secret, a third-party API key, or a User password, and every such value SHALL be read at run time from an untracked environment file.
+6. THE repository SHALL include a tracked example environment file naming every environment variable required to run the API_Server, the Web_Client, and the Test_Suite, each variable carrying a placeholder value that is not a working credential.
+7. IF the Test_Suite does not pass at the end of an increment, THEN THE Mini_Operations_ERP SHALL retain that increment as uncommitted work until the Test_Suite passes, so that no commit pushed to the repository leaves the Test_Suite failing.
+
+### Requirement 15: Extensibility for Live Verification
+
+**User Story:** As an evaluator, I want the codebase shaped so that a small change can be added live, so that I can confirm the design is genuinely extensible.
+
+#### Acceptance Criteria
+
+1. THE Inventory_Service SHALL compute Available_Quantity in exactly one exported function that accepts one Inventory_Record and returns `Physical_Quantity - Reserved_Quantity`, and every Inventory_Service read path and every quantity guard of the Work_Order_Service, Transfer_Service, and Order_Service SHALL obtain Available_Quantity by calling that one function, so that no other module subtracts Reserved_Quantity from Physical_Quantity and so that adding a further deducted quantity component, such as a damaged quantity, requires editing that single function and the Inventory_Record schema only.
+2. THE Transfer_Service SHALL store a Received_Quantity field on every Internal_Transfer document, set to 0 when the Internal_Transfer is created, constrained to an integer from 0 to the Internal_Transfer Quantity, and set to the Internal_Transfer Quantity when the Transfer_Status becomes `Received`, so that supporting partial receipt requires editing the single named receipt guard function and no field of the Internal_Transfer schema.
+3. THE Order_Service SHALL store on every Customer_Order a Reservation_Entry list holding at least 1 and at most 20 entries, each entry naming one Item reference, one Location reference, one Batch identifier, and one Valid_Quantity, so that cancelling a Customer_Order can release exactly the Reserved_Quantity that each entry consumed from the Inventory_Record identified by that entry.
+4. THE Auth_Service SHALL store on every User document an Assigned_Location field whose value is either the ObjectId of an existing Location document or null, so that restricting a User to that Location requires adding one Location filter in the Authorization_Middleware alongside the existing route-to-Role mapping.
+5. THE API_Server SHALL implement every quantity comparison guard and every status transition guard as a named function exported from a service module, and every route handler SHALL contain no quantity comparison and no status transition comparison, so that changing one business rule requires editing one function.
+6. FOR ALL Customer_Order documents holding Customer_Order_Status `Reserved`, THE Order_Service SHALL hold that the sum of the Quantity values of the Reservation_Entry list equals the Customer_Order Quantity and that every entry Quantity is greater than 0 (reservation completeness property).
+7. THE Documentation_Set SHALL include an extensibility section that names, for each of adding a damaged quantity that reduces Available_Quantity, accepting a partial Internal_Transfer receipt, cancelling a Customer_Order and releasing its Reserved_Quantity, and restricting a User to the Assigned_Location, the module and named function to edit and the schema fields to add.
