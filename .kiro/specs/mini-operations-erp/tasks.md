@@ -133,7 +133,7 @@ Scope discipline: no file, function, or abstraction beyond what design.md names.
     - `git commit -m "Add role-based authorization with a single write-route permission map"`, then `git push`
     - _Requirements: 14.1, 14.2, 14.7_
 
-- [ ] 4. Reference data and the seed script
+- [x] 4. Reference data and the seed script
   - [x] 4.1 Create the reference data models
     - `backend/src/models/Category.js` (unique `name`), `backend/src/models/Item.js` (unique `code`, `name`, required `category` ObjectId reference, non-unique `category` index), `backend/src/models/Location.js` (unique `code`, `name`)
     - _Requirements: 3.2_
@@ -156,95 +156,95 @@ Scope discipline: no file, function, or abstraction beyond what design.md names.
     - `backend/tests/reference.test.js` — authenticated list responses and shapes, 401 without a token
     - _Requirements: 2.13, 3.2_
 
-  - [-] 4.6 Run the suite, commit, and push increment 4
+  - [x] 4.6 Run the suite, commit, and push increment 4
     - Run `npm test`; commit only on exit 0
     - `git commit -m "Add category, item and location reference data with seed script"`, then `git push`
     - _Requirements: 14.1, 14.2, 14.7_
 
 - [ ] 5. Inventory core: availability, transactions, records, and ledger
-  - [ ] 5.1 Create the shared field helpers and the InventoryRecord model
+  - [x] 5.1 Create the shared field helpers and the InventoryRecord model
     - `backend/src/models/fields.js` — `nonNegativeCount` (integer 0..999,999,999) and `validQuantity` (integer 1..1,000,000)
     - `backend/src/models/InventoryRecord.js` — `item`, `location`, trimmed `batch` 1..32, `physicalQuantity`, `reservedQuantity`, an `availableQuantity` virtual that delegates to `availableQuantity(record)`, and no stored available field
     - Declare the `{ item: 1, location: 1, batch: 1 }` index **once**, as the unique index only; do not add the redundant non-unique duplicate of the same key pattern shown in design.md
     - _Requirements: 3.1, 3.2, 3.3, 3.6, 3.10_
 
-  - [ ] 5.2 Create the append-only InventoryTransaction model
+  - [x] 5.2 Create the append-only InventoryTransaction model
     - `backend/src/models/InventoryTransaction.js` — `inventoryRecord`, signed integer `physicalDelta` and `reservedDelta`, unique `movementReference`, `appliedAt`, nullable `createdBy`; indexes `{ movementReference: 1 }` unique and `{ inventoryRecord: 1, appliedAt: 1 }`; pre-hooks rejecting every update and delete operation
     - _Requirements: 4.4, 4.5, 4.7, 4.10_
 
-  - [ ] 5.3 Implement the availability module
+  - [x] 5.3 Implement the availability module
     - `backend/src/services/availability.js` — `availableQuantity(record)`, `locationAvailableQuantity(records)`, `hasAvailableAtLeastExpr(quantity)`; the only module in the codebase that subtracts `reservedQuantity` from `physicalQuantity`
     - _Requirements: 3.3, 3.4, 3.5, 3.12, 15.1_
 
-  - [ ] 5.4 Implement the transaction helper
+  - [x] 5.4 Implement the transaction helper
     - `backend/src/db/withTransaction.js` — fresh session per attempt, `startTransaction`, commit on success, abort on any error, `endSession()` in `finally`, transient-label retry up to 3 times (4 attempts), then `CONCURRENT_MODIFICATION` 409
     - _Requirements: 8.1, 8.2, 8.3, 8.5_
 
-  - [ ] 5.5 Implement the movement reference builders
+  - [x] 5.5 Implement the movement reference builders
     - `backend/src/services/movementReference.js` — `openingMovementReference`, `adjustMovementReference`, `transferMovementReference`, `reserveMovementReference` exactly as named in design.md
     - _Requirements: 4.5, 4.6, 4.9_
 
-  - [ ] 5.6 Implement the inventory service
+  - [x] 5.6 Implement the inventory service
     - `backend/src/services/inventory.service.js` — `applyMovement` (the one place that writes a record change and its ledger row in the caller's session, using a conditional update whose filter carries the availability/non-negativity condition and mapping `error.code === 11000` to `DUPLICATE_INVENTORY_TRANSACTION`), named guards `assertSufficientPhysical` and `assertSufficientAvailable`, `createRecord` (pre-generated `_id`, existence checks returning `INVALID_REFERENCE`, duplicate triple returning `DUPLICATE_INVENTORY_RECORD`, opening ledger row in the same transaction), `adjustRecord` (`IN`/`OUT`), `listRecords`, `getLocationAvailability` (0 when no records)
     - _Requirements: 3.7, 3.8, 3.9, 3.10, 3.11, 3.12, 4.2, 4.3, 4.4, 4.6, 4.9, 8.1, 15.5_
 
-  - [ ] 5.7 Add the inventory validation schemas and quantity error code selection
+  - [x] 5.7 Add the inventory validation schemas and quantity error code selection
     - `backend/src/validation/inventory.schemas.js` — strict bodies for create (`item`, `location`, `batch`, `physicalQuantity`, `movementReference`) and adjust (`direction`, `quantity`, `movementReference`), plus the `?item&location` query schemas
     - Extend `backend/src/middleware/validate.js` so a failure whose issue paths all name a quantity field reports `INVALID_QUANTITY` and mixed failures fall back to `VALIDATION_ERROR`
     - _Requirements: 4.1, 4.8, 9.2, 9.3, 9.4_
 
-  - [ ] 5.8 Wire the inventory routes
+  - [x] 5.8 Wire the inventory routes
     - `backend/src/controllers/inventory.controller.js` (reads `req.validated` and `req.user` only, no quantity comparisons) and `backend/src/routes/inventory.routes.js` — `GET /api/inventory`, `GET /api/inventory/availability`, `POST /api/inventory`, `POST /api/inventory/:id/adjust` with `authorize` and `validate` attached per route
     - Mount in `backend/src/routes/index.js`
     - _Requirements: 2.4, 2.5, 3.3, 3.5, 9.1, 15.5_
 
-  - [ ] 5.9 Extend the seed script and the test fixture with inventory records
+  - [x] 5.9 Extend the seed script and the test fixture with inventory records
     - `backend/scripts/seed.js` — add at least one Inventory_Record whose Available_Quantity is ≥ 1 at a location usable as a transfer source
     - `backend/tests/setup/seedFixture.js` — add two Inventory_Records with stated physical and reserved quantities
     - _Requirements: 12.11, 13.5_
 
-  - [ ]* 5.10 Add the shared property test generators
+  - [x]* 5.10 Add the shared property test generators
     - `backend/tests/setup/generators.js` — `genQuantity`, `genInvalidQuantity`, `genBatch`, `genRecordLayout`, `genOperationSequence`, `genUnusedObjectId`, `genMalformedId`, `genRole`, `genConcurrentQuantities`; fast-check configured with `numRuns: 25` minimum and counterexample seed reporting
     - _Requirements: 12.7_
 
-  - [ ]* 5.11 Write unit tests for inventory creation, adjustment, and reads
+  - [x]* 5.11 Write unit tests for inventory creation, adjustment, and reads
     - `backend/tests/inventory.test.js` — 100/30 → 70 example, duplicate triple 409, `INVALID_REFERENCE`, opening ledger row contents, adjustment guards, availability read of 0 when no record exists
     - _Requirements: 3.4, 3.7, 3.11, 3.12, 4.2, 4.3, 4.9_
 
-  - [ ] 5.12 Write mandatory test 5 against a real restricted write route
+  - [x] 5.12 Write mandatory test 5 against a real restricted write route
     - Extend `backend/tests/authorization.test.js` — a Sales_User token calling `POST /api/inventory/:id/adjust` receives 403 `FORBIDDEN`, and every field of the targeted Inventory_Record equals the value read immediately before the request; issued over HTTP through the app
     - _Requirements: 2.5, 12.5, 12.13_
 
-  - [ ]* 5.13 Write property test for derived availability
+  - [x]* 5.13 Write property test for derived availability
     - `backend/tests/properties/inventory.pbt.test.js`
     - **Property 1: Available quantity is always the derived difference**
     - **Validates: Requirements 3.3, 3.4, 3.5, 3.12, 15.1**
 
-  - [ ]* 5.14 Write property test for the inventory invariants
+  - [x]* 5.14 Write property test for the inventory invariants
     - **Property 2: Inventory invariants survive every accepted operation**
     - **Validates: Requirements 3.8, 3.9**
 
-  - [ ]* 5.15 Write property test for record identity
+  - [x]* 5.15 Write property test for record identity
     - **Property 3: Item, location, and batch identify at most one record**
     - **Validates: Requirements 3.6, 3.7**
 
-  - [ ]* 5.16 Write property test for ledger reconstruction
+  - [x]* 5.16 Write property test for ledger reconstruction
     - **Property 4: The ledger reconstructs the balances**
     - **Validates: Requirements 4.4, 4.7, 4.9**
 
-  - [ ]* 5.17 Write property test for movement reference idempotency
+  - [x]* 5.17 Write property test for movement reference idempotency
     - **Property 5: A movement reference can be applied at most once**
     - **Validates: Requirements 4.5, 4.6, 4.10**
 
-  - [ ]* 5.18 Write property test for rejected movement totality
+  - [x]* 5.18 Write property test for rejected movement totality
     - **Property 6: Rejected movements leave the world untouched**
     - **Validates: Requirements 4.2, 4.3, 8.2, 8.8**
 
-  - [ ]* 5.19 Write property test for invalid quantity rejection
+  - [x]* 5.19 Write property test for invalid quantity rejection
     - **Property 7: Invalid quantities are rejected identically everywhere**
     - **Validates: Requirements 4.1, 5.2, 6.13, 7.9**
 
-  - [ ] 5.20 Run the suite, commit, and push increment 5
+  - [-] 5.20 Run the suite, commit, and push increment 5
     - Run `npm test`; commit only on exit 0
     - `git commit -m "Add inventory records, derived availability and transactional ledger"`, then `git push`
     - _Requirements: 14.1, 14.2, 14.7_

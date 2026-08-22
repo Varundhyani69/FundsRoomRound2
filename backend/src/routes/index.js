@@ -11,6 +11,7 @@ const express = require('express');
 const authenticate = require('../middleware/authenticate');
 const authRoutes = require('./auth.routes');
 const referenceRoutes = require('./reference.routes');
+const inventoryRoutes = require('./inventory.routes');
 
 const router = express.Router();
 
@@ -28,7 +29,9 @@ router.use('/users', authenticate, referenceRoutes.users);
 // rather than a bare `router.use(authenticate)` here. A catch-all would answer 401
 // for any unmatched /api path too, and Req 9.12 wants those to reach notFound and
 // return 404 ROUTE_NOT_FOUND. Attaching it per mount keeps both true.
-// Routers for inventory, work orders, transfers and orders are added in their own
+router.use('/inventory', authenticate, inventoryRoutes);
+
+// Routers for work orders, transfers and orders are added in their own
 // increments.
 
 module.exports = router;

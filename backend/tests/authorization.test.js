@@ -13,8 +13,10 @@ const jwt = require('jsonwebtoken');
 
 const config = require('../src/config');
 const User = require('../src/models/User');
+const InventoryRecord = require('../src/models/InventoryRecord');
+const InventoryTransaction = require('../src/models/InventoryTransaction');
 const { ROLES, WRITE_ROUTE_PERMISSIONS } = require('../src/permissions');
-const { app: realApp } = require('./setup/agent');
+const { app: realApp, agent } = require('./setup/agent');
 const {
     app: stubApp,
     callRoute,
@@ -22,7 +24,7 @@ const {
     READ_ROUTE,
     STUB_WRITE_MARKER,
 } = require('./setup/authorizeTestApp');
-const { FIXTURE_USERS, tokenFor } = require('./setup/seedFixture');
+const { FIXTURE_USERS, FIXTURE_INVENTORY_RECORDS, tokenFor } = require('./setup/seedFixture');
 
 // The one response shape every denial must produce (Req 2.3, 2.5, 2.7, 2.11, 2.12).
 const FORBIDDEN_BODY = { code: 'FORBIDDEN', message: expect.any(String) };
@@ -254,5 +256,46 @@ describe('WRITE_ROUTE_PERMISSIONS completeness (Req 2.8, 2.14)', () => {
             'Admin',
             'OperationsUser',
         ]);
+    });
+});
+
+// ---------------------------------------------------------------------------------------
+// Mandatory test 5 (Req 12.5, 12.13)
+//
+// A real restricted write route, POST /api/inventory, now exists (increment 5), so this
+// test issues an actual request against it instead of a stub -- unlike the matrix above,
+// which still uses the stub app because most write routes are not wired up yet. Both the
+// InventoryRecord and InventoryTransaction collections are asserted unchanged field by
+// field, not merely by count, so the assertion catches a partial write too.
+// ---------------------------------------------------------------------------------------
+
+describe('mandatory test 5: a restricted write route with a targeted document (Req 12.5)', () => {
+    const snapshotInventoryRecords = () => InventoryRecord.find({}).sort({ _id: 1 }).lean();
+    const snapshotInventoryTransactions = () =>
+        InventoryTransaction.find({}).sort({ _id: 1 }).lean();
+
+    test('a SalesUser creating an Inventory_Record is denied 403 FORBIDDEN, leaving every targeted document unchanged', async () => {
+        const recordsBefore = await snapshotInventoryRecords();
+        const transactionsBefore = await snapshotInventoryTransactions();
+
+        const response = await agent()
+            .post('/api/inventory')
+            .set('Authorization', `Bearer ${await tokenFor('SalesUser')}`)
+            .send({
+                item: FIXTURE_INVENTORY_RECORDS.widgetMainBatchA.item,
+                location: FIXTURE_INVENTORY_RECORDS.widgetMainBatchA.location,
+                batch: 'MANDATORY-TEST-5',
+                physicalQuantity: 25,
+                movementReference: 'mandatory-test-5-attempt',
+            });
+
+        expect(response.status).toBe(403);
+        expect(response.body).toEqual({ code: 'FORBIDDEN', message: expect.any(String) });
+
+        // Every field value of each targeted document equals the value read immediately
+        // before the request: a snapshot comparison, not a count, so a partial write (a
+        // record inserted with no ledger row, for instance) would also be caught.
+        expect(await snapshotInventoryRecords()).toEqual(recordsBefore);
+        expect(await snapshotInventoryTransactions()).toEqual(transactionsBefore);
     });
 });

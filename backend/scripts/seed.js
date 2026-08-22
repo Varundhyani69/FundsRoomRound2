@@ -9,20 +9,25 @@
 // ever passed to `hashPassword` from the Auth_Service, so the database holds a bcrypt hash
 // and nothing else (Req 1.5).
 //
-// Idempotent: every document is upserted on its unique business key (User email, Location
-// code, Category name, Item code), so running the seed twice leaves the same rows rather
-// than duplicating them or erroring on the unique indexes. Nothing is deleted, so a
+// Idempotent: every reference document is upserted on its unique business key (User email,
+// Location code, Category name, Item code), so running the seed twice leaves the same rows
+// rather than duplicating them or erroring on the unique indexes. Inventory_Records are
+// idempotent the same way but by a find-before-create check on their own unique key ({ item,
+// location, batch }), since creating one always writes an opening ledger row and an upsert
+// would either skip that row on a second run or write a second one. Nothing is deleted, so a
 // database that already carries other data keeps it. Re-running does reset the password of
 // each seeded User to the value currently in the environment.
 
 const config = require('../src/config'); // loads .env and validates MONGODB_URI first
 const { connect, disconnect } = require('../src/db/connect');
 const { hashPassword } = require('../src/services/auth.service');
+const { createInventoryRecord } = require('../src/services/inventory.service');
 
 const User = require('../src/models/User');
 const Category = require('../src/models/Category');
 const Item = require('../src/models/Item');
 const Location = require('../src/models/Location');
+const InventoryRecord = require('../src/models/InventoryRecord');
 
 // bcrypt only consumes the first 72 bytes of a password, and the login schema rejects
 // anything longer, so a longer seed password would silently not be the password that works.
@@ -40,6 +45,16 @@ const SEED_CATEGORIES = [{ name: 'Raw Material' }];
 const SEED_ITEMS = [
     { code: 'ITM-1001', name: 'Steel Bolt M8', categoryName: 'Raw Material' },
     { code: 'ITM-1002', name: 'Steel Nut M8', categoryName: 'Raw Material' },
+];
+
+// Opening stock, keyed by the same business keys as the reference data above (Req 13.5).
+// ITM-1001 at WH-MAIN carries 50 units: enough for a later Internal_Transfer to WH-NORTH
+// (a transfer of, say, 20 units leaves plenty behind) and enough headroom that task 6.5's
+// seeded Work_Order can name a requiredQuantity above 50 and show a non-zero
+// Shortage_Quantity. WH-NORTH itself starts with no Inventory_Record for this item, so a
+// transfer's receipt step is what creates one, which is exactly the case Req 6.8 covers.
+const SEED_INVENTORY_RECORDS = [
+    { itemCode: 'ITM-1001', locationCode: 'WH-MAIN', batch: 'BATCH-001', physicalQuantity: 50 },
 ];
 
 // One User per Role. `passwordVar` names the environment variable the password comes from;
@@ -183,12 +198,53 @@ async function seedUsers(passwords, locations) {
 }
 
 /**
+ * At least one Inventory_Record with Available_Quantity >= 1 at a Location usable as an
+ * Internal_Transfer source (Req 13.5).
+ *
+ * `createInventoryRecord` from the Inventory_Service is reused rather than an `upsertBy` on
+ * the InventoryRecord model directly, because that service function is the one place that
+ * also writes the opening Inventory_Transaction ledger row inside the same transaction (Req
+ * 4.4, 4.9) -- writing the record without it would leave `physicalQuantity` unreconstructable
+ * from the ledger (Req 4.7). Idempotency is a find-before-create check on the same
+ * `{ item, location, batch }` business key the model's unique index enforces, since
+ * `createInventoryRecord` itself rejects an existing triple with `DUPLICATE_INVENTORY_RECORD`
+ * rather than upserting it.
+ */
+async function seedInventoryRecords(items, locations) {
+    const records = new Map();
+
+    for (const { itemCode, locationCode, batch, physicalQuantity } of SEED_INVENTORY_RECORDS) {
+        const item = items.get(itemCode);
+        const location = locations.get(locationCode);
+        if (!item || !location) {
+            throw new Error(
+                `Seed inventory record names item "${itemCode}" or location "${locationCode}", ` +
+                'which is not in SEED_ITEMS / SEED_LOCATIONS.'
+            );
+        }
+
+        let record = await InventoryRecord.findOne({ item: item._id, location: location._id, batch });
+        if (!record) {
+            record = await createInventoryRecord({
+                item: item._id,
+                location: location._id,
+                batch,
+                physicalQuantity,
+            });
+        }
+
+        records.set(`${itemCode}:${locationCode}:${batch}`, record);
+    }
+
+    return records;
+}
+
+/**
  * Load the whole seed dataset.
  *
  * The steps run in dependency order and each returns its documents keyed by business key,
- * so a later step can look an id up without querying again. Tasks 5.9 and 6.5 add the
- * Inventory_Record and Work_Order steps at the end of this function using `items`,
- * `locations`, and `users`.
+ * so a later step can look an id up without querying again. Task 6.5 adds the Work_Order
+ * step at the end of this function using `items`, `locations`, and `users`.
  *
  * @param {Record<string, string>} passwords validated seed passwords, keyed by variable name
  */
@@ -197,8 +253,9 @@ async function seed(passwords) {
     const categories = await seedCategories();
     const items = await seedItems(categories);
     const users = await seedUsers(passwords, locations);
+    const inventoryRecords = await seedInventoryRecords(items, locations);
 
-    return { locations, categories, items, users };
+    return { locations, categories, items, users, inventoryRecords };
 }
 
 /** One line per seeded User: email, Role, and the variable its password came from. */
@@ -225,11 +282,14 @@ async function main() {
     await connect(config.mongoUri);
 
     try {
-        const { locations, categories, items, users } = await seed(passwordCheck.passwords);
+        const { locations, categories, items, users, inventoryRecords } = await seed(
+            passwordCheck.passwords
+        );
         reportUsers(users);
         console.log(
             `Seeded reference data: ${locations.size} location(s), ` +
-            `${categories.size} category/categories, ${items.size} item(s).`
+            `${categories.size} category/categories, ${items.size} item(s), ` +
+            `${inventoryRecords.size} inventory record(s).`
         );
         return 0;
     } finally {

@@ -2,11 +2,11 @@
 //
 // dbSetup.js deletes every document of every collection before each test and then calls
 // `seedFixture()`, so every test starts from this same known state and the suite passes
-// in any execution order. Task 5.9 extends this module further with the inventory records.
+// in any execution order.
 //
-// Only the API_Server's own modules are used to build the state: the models and
-// `hashPassword` from the Auth_Service, so the fixture cannot drift from how a real
-// document is stored.
+// Only the API_Server's own modules are used to build the state: the models,
+// `hashPassword` from the Auth_Service, and `openingMovementReference` from the movement
+// reference builders, so the fixture cannot drift from how a real document is stored.
 
 const crypto = require('crypto');
 
@@ -14,7 +14,10 @@ const Category = require('../../src/models/Category');
 const Item = require('../../src/models/Item');
 const Location = require('../../src/models/Location');
 const User = require('../../src/models/User');
+const InventoryRecord = require('../../src/models/InventoryRecord');
+const InventoryTransaction = require('../../src/models/InventoryTransaction');
 const { hashPassword, login } = require('../../src/services/auth.service');
+const { openingMovementReference } = require('../../src/services/movementReference');
 
 // Fixed identifiers: a test can assert against a known id, and an issued token keeps
 // naming the same User for the whole run.
@@ -39,6 +42,15 @@ const CATEGORY_IDS = {
 const ITEM_IDS = {
     widget: '000000000000000000000d01',
     gadget: '000000000000000000000d02',
+};
+
+// Inventory_Record ids use their own trailing letter, the same reason every other reference
+// id block does: a failure message naming an `...e01` id says at a glance which collection
+// it is from.
+const INVENTORY_RECORD_IDS = {
+    widgetMainBatchA: '000000000000000000000e01',
+    widgetMainBatchB: '000000000000000000000e02',
+    gadgetSecondaryLow: '000000000000000000000e03',
 };
 
 // Two Locations, so a transfer in a test has a distinct source and destination.
@@ -76,6 +88,41 @@ const FIXTURE_ITEMS = {
         code: 'GADGET',
         name: 'Fixture Gadget',
         category: CATEGORY_IDS.rawMaterial,
+    },
+};
+
+// Three Inventory_Records, covering the two shapes a test needs beyond the "at least two"
+// floor of Req 12.11:
+//   - `widgetMainBatchA` and `widgetMainBatchB` are the same Item at the same Location in
+//     two Batches, so a reservation-across-batches test has more than one batch to allocate
+//     against (available 70 + 50 = 120 at `main` for `widget`, consumed in ascending batch
+//     order starting with "A").
+//   - `gadgetSecondaryLow` is fully reserved (available 0), so a shortage or
+//     insufficient-availability test has a combination to hit without writing one first.
+const FIXTURE_INVENTORY_RECORDS = {
+    widgetMainBatchA: {
+        id: INVENTORY_RECORD_IDS.widgetMainBatchA,
+        item: ITEM_IDS.widget,
+        location: LOCATION_IDS.main,
+        batch: 'A',
+        physicalQuantity: 100,
+        reservedQuantity: 30,
+    },
+    widgetMainBatchB: {
+        id: INVENTORY_RECORD_IDS.widgetMainBatchB,
+        item: ITEM_IDS.widget,
+        location: LOCATION_IDS.main,
+        batch: 'B',
+        physicalQuantity: 50,
+        reservedQuantity: 0,
+    },
+    gadgetSecondaryLow: {
+        id: INVENTORY_RECORD_IDS.gadgetSecondaryLow,
+        item: ITEM_IDS.gadget,
+        location: LOCATION_IDS.secondary,
+        batch: 'A',
+        physicalQuantity: 5,
+        reservedQuantity: 5,
     },
 };
 
@@ -201,6 +248,67 @@ async function seedReferenceData() {
 }
 
 /**
+ * Insert the three Inventory_Records of `FIXTURE_INVENTORY_RECORDS`, plus the ledger rows
+ * that back them.
+ *
+ * Every record is written together with its Inventory_Transaction rows rather than through
+ * a bare `InventoryRecord.create`, so the fixture itself already satisfies the ledger
+ * reconstruction property (Req 4.7) instead of only becoming provable once a test moves a
+ * record. Each record gets its opening row (physicalDelta = physicalQuantity, Req 4.9), and,
+ * for the one record seeded with a starting Reserved_Quantity, one further row moving that
+ * quantity into `reservedQuantity`.
+ *
+ * @returns {Promise<typeof FIXTURE_INVENTORY_RECORDS>} the fixture description, ids included
+ */
+async function seedInventoryRecords() {
+    const records = Object.values(FIXTURE_INVENTORY_RECORDS);
+
+    await InventoryRecord.create(
+        records.map(({ id, item, location, batch, physicalQuantity, reservedQuantity }) => ({
+            _id: id,
+            item,
+            location,
+            batch,
+            physicalQuantity,
+            reservedQuantity,
+        }))
+    );
+
+    const appliedAt = new Date();
+    const transactions = [];
+
+    for (const record of records) {
+        transactions.push({
+            inventoryRecord: record.id,
+            physicalDelta: record.physicalQuantity,
+            reservedDelta: 0,
+            movementReference: openingMovementReference(record.id),
+            appliedAt,
+            createdBy: null,
+        });
+
+        if (record.reservedQuantity > 0) {
+            // Not `reserveMovementReference`: that builder names a Customer_Order id, and no
+            // order exists behind this starting reservation. A fixture-only reference is
+            // enough, since uniqueness only has to hold against the other rows this module
+            // writes.
+            transactions.push({
+                inventoryRecord: record.id,
+                physicalDelta: 0,
+                reservedDelta: record.reservedQuantity,
+                movementReference: `FIXTURE:${record.id}:RESERVE`,
+                appliedAt,
+                createdBy: null,
+            });
+        }
+    }
+
+    await InventoryTransaction.create(transactions);
+
+    return FIXTURE_INVENTORY_RECORDS;
+}
+
+/**
  * Load the whole fixture. Called from the `beforeEach` in dbSetup.js.
  *
  * @returns {Promise<{
@@ -208,15 +316,17 @@ async function seedReferenceData() {
  *   locations: typeof FIXTURE_LOCATIONS,
  *   categories: typeof FIXTURE_CATEGORIES,
  *   items: typeof FIXTURE_ITEMS,
+ *   inventoryRecords: typeof FIXTURE_INVENTORY_RECORDS,
  * }>}
  */
 async function seedFixture() {
-    // Reference data first: the seeded Operations_User names a fixture Location, so that
-    // Location has to exist by the time the Users are written.
+    // Reference data first: the seeded Operations_User names a fixture Location, and the
+    // Inventory_Records name fixture Items and Locations, so both have to exist first.
     const reference = await seedReferenceData();
     const users = await seedUsers();
+    const inventoryRecords = await seedInventoryRecords();
 
-    return { users, ...reference };
+    return { users, inventoryRecords, ...reference };
 }
 
 /**
@@ -243,8 +353,10 @@ module.exports = {
     FIXTURE_LOCATIONS,
     FIXTURE_CATEGORIES,
     FIXTURE_ITEMS,
+    FIXTURE_INVENTORY_RECORDS,
     seedUsers,
     seedReferenceData,
+    seedInventoryRecords,
     seedFixture,
     tokenFor,
 };
