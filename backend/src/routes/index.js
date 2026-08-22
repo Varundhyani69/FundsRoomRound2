@@ -13,6 +13,7 @@ const authRoutes = require('./auth.routes');
 const referenceRoutes = require('./reference.routes');
 const inventoryRoutes = require('./inventory.routes');
 const workOrderRoutes = require('./workOrder.routes');
+const transferRoutes = require('./transfer.routes');
 
 const router = express.Router();
 
@@ -32,7 +33,8 @@ router.use('/users', authenticate, referenceRoutes.users);
 // return 404 ROUTE_NOT_FOUND. Attaching it per mount keeps both true.
 router.use('/inventory', authenticate, inventoryRoutes);
 router.use('/work-orders', authenticate, workOrderRoutes);
+router.use('/transfers', authenticate, transferRoutes);
 
-// Routers for transfers and orders are added in their own increments.
+// The router for orders is added in its own increment.
 
 module.exports = router;

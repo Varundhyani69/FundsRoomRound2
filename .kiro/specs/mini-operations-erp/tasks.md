@@ -249,7 +249,7 @@ Scope discipline: no file, function, or abstraction beyond what design.md names.
     - `git commit -m "Add inventory records, derived availability and transactional ledger"`, then `git push`
     - _Requirements: 14.1, 14.2, 14.7_
 
-- [ ] 6. Work orders and derived shortage
+- [x] 6. Work orders and derived shortage
   - [x] 6.1 Create the WorkOrder model
     - `backend/src/models/WorkOrder.js` — `location`, `item`, `requiredQuantity` (`validQuantity`), `assignedUser`, `status` enum defaulting to `Assigned`, nullable `statusChangedAt`, `createdBy`, indexes `{ item, location }` and `{ status }`, and no stored shortage field
     - _Requirements: 5.1, 5.4_
@@ -283,54 +283,54 @@ Scope discipline: no file, function, or abstraction beyond what design.md names.
     - **Property 9: A status change is accepted exactly when it is the successor**
     - **Validates: Requirements 5.7, 5.9, 5.11, 6.5, 6.10**
 
-  - [-] 6.9 Run the suite, commit, and push increment 6
+  - [x] 6.9 Run the suite, commit, and push increment 6
     - Run `npm test`; commit only on exit 0
     - `git commit -m "Add work orders with read-time material shortage calculation"`, then `git push`
     - _Requirements: 14.1, 14.2, 14.7_
 
 - [ ] 7. Internal stock transfers
-  - [ ] 7.1 Create the InternalTransfer model
+  - [x] 7.1 Create the InternalTransfer model
     - `backend/src/models/InternalTransfer.js` — `item`, trimmed `batch`, `sourceLocation`, `destinationLocation`, `quantity` (`validQuantity`), `receivedQuantity` bounded by `quantity`, `status` enum defaulting to `Requested`, nullable `dispatchedAt` and `receivedAt`, indexes `{ status }` and `{ item, sourceLocation, batch }`
     - _Requirements: 6.1, 15.2_
 
-  - [ ] 7.2 Implement the transfer service
+  - [x] 7.2 Implement the transfer service
     - `backend/src/services/transfer.service.js` — named guards `assertDifferentLocations` (`SAME_LOCATION_TRANSFER`) and `assertTransferTransition` (`INVALID_STATUS_TRANSITION`); `createTransfer` with existence checks including the source Inventory_Record (`INVALID_REFERENCE`) and no inventory write; `dispatchTransfer` inside `withTransaction` calling `applyMovement` with `-quantity` at the source and `transferMovementReference(id, 'DISPATCH')`; `receiveTransfer` inside `withTransaction` increasing or creating the destination record, setting `receivedQuantity` and `receivedAt`, using `transferMovementReference(id, 'RECEIPT')` and mapping the duplicate-key signal to `TRANSFER_ALREADY_RECEIVED`; `NOT_FOUND` on unmatched ids
     - _Requirements: 6.1, 6.2, 6.3, 6.4, 6.5, 6.6, 6.7, 6.8, 6.9, 6.10, 6.14, 6.15, 15.2, 15.5_
 
-  - [ ] 7.3 Add the transfer validation schemas
+  - [x] 7.3 Add the transfer validation schemas
     - `backend/src/validation/transfer.schemas.js` — strict creation body, empty dispatch and receive bodies, `objectId` path params, list query filter
     - _Requirements: 6.13, 9.2, 9.10_
 
-  - [ ] 7.4 Wire the transfer routes
+  - [x] 7.4 Wire the transfer routes
     - `backend/src/controllers/transfer.controller.js` and `backend/src/routes/transfer.routes.js` — `GET /api/transfers`, `POST /api/transfers`, `POST /api/transfers/:id/dispatch`, `POST /api/transfers/:id/receive`; mount in `backend/src/routes/index.js`
     - _Requirements: 2.4, 2.5, 6.1, 6.4, 6.7_
 
-  - [ ] 7.5 Write mandatory test 2: over-availability dispatch
+  - [x] 7.5 Write mandatory test 2: over-availability dispatch
     - `backend/tests/transfers.test.js` — dispatch of a quantity above source availability returns 409 `INSUFFICIENT_AVAILABLE_QUANTITY`, the source physical quantity equals the value read immediately before, and the status stays `Requested`; issued over HTTP
     - _Requirements: 6.5, 12.2, 12.13_
 
-  - [ ] 7.6 Write mandatory test 3: three-point destination reading
+  - [x] 7.6 Write mandatory test 3: three-point destination reading
     - Extend `backend/tests/transfers.test.js` — destination physical quantity before dispatch, while `Dispatched`, and after `Received`; first two readings equal, third equals the first plus the transfer quantity
     - _Requirements: 6.3, 6.6, 6.7, 12.3, 12.13_
 
-  - [ ] 7.7 Write mandatory test 4: second receipt rejected
+  - [x] 7.7 Write mandatory test 4: second receipt rejected
     - Extend `backend/tests/transfers.test.js` — a second receipt returns 409 `TRANSFER_ALREADY_RECEIVED` and the destination physical quantity equals the value read after the first accepted receipt
     - _Requirements: 6.9, 12.4, 12.13_
 
-  - [ ]* 7.8 Write unit tests for the transfer creation guards
+  - [x]* 7.8 Write unit tests for the transfer creation guards
     - Extend `backend/tests/transfers.test.js` — same-location rejection, unknown references, unknown source batch, invalid quantity, unmatched transfer id, and out-of-order dispatch/receive
     - _Requirements: 6.2, 6.10, 6.13, 6.14, 6.15_
 
-  - [ ]* 7.9 Write property test for transfer conservation
+  - [x]* 7.9 Write property test for transfer conservation
     - `backend/tests/properties/transfers.pbt.test.js`
     - **Property 10: Transfers conserve quantity and hide stock in transit**
     - **Validates: Requirements 6.3, 6.4, 6.6, 6.7, 6.8, 6.11**
 
-  - [ ]* 7.10 Write property test for receipt idempotence
+  - [x]* 7.10 Write property test for receipt idempotence
     - **Property 11: Receipt is idempotent and received quantity stays bounded**
     - **Validates: Requirements 6.9, 6.12, 15.2**
 
-  - [ ] 7.11 Run the suite, commit, and push increment 7
+  - [-] 7.11 Run the suite, commit, and push increment 7
     - Run `npm test`; commit only on exit 0
     - `git commit -m "Add internal transfers with dispatch and receipt lifecycle"`, then `git push`
     - _Requirements: 14.1, 14.2, 14.7_
