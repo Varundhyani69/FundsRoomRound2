@@ -1,12 +1,27 @@
 // backend/src/routes/index.js -- the /api router, mounted by app.js.
-// Empty for now: auth mounts here in increment 2, then authenticate is applied to
-// every later router so no unauthenticated request reaches role evaluation
-// (Req 1.8, 2.1). No route is declared before its increment, so an undeclared
-// path keeps falling through to notFound and the documented route list stays
-// exactly the implemented one (Req 13.9).
+// Mount order is the security boundary: the public auth router first, then every
+// later router with `authenticate` attached at its mount point, so no
+// unauthenticated request can reach role evaluation (Req 1.8, 2.1).
+// No route is declared before its increment, so an undeclared path keeps falling
+// through to notFound and the documented route list stays exactly the implemented
+// one (Req 13.9).
 
 const express = require('express');
 
+const authenticate = require('../middleware/authenticate');
+const authRoutes = require('./auth.routes');
+
 const router = express.Router();
+
+// Public: the one route that runs without a token (Req 1.8).
+router.use('/auth', authRoutes);
+
+// Every protected router is mounted with `authenticate` in front of it, as
+//     router.use('/inventory', authenticate, inventoryRoutes);
+// rather than a bare `router.use(authenticate)` here. A catch-all would answer 401
+// for any unmatched /api path too, and Req 9.12 wants those to reach notFound and
+// return 404 ROUTE_NOT_FOUND. Attaching it per mount keeps both true.
+// Routers for inventory, work orders, transfers, orders and reference data are added
+// in their own increments.
 
 module.exports = router;

@@ -27,6 +27,7 @@ for (const [name, value] of Object.entries(testEnv)) {
 const mongoose = require('mongoose');
 const { connect, disconnect } = require('../../src/db/connect');
 const assertReplicaSet = require('./assertReplicaSet');
+const { seedFixture } = require('./seedFixture');
 
 // One connection per worker, opened once for the whole file.
 beforeAll(async () => {
@@ -34,12 +35,14 @@ beforeAll(async () => {
     await assertReplicaSet();
 });
 
-// Per-test reset: every document of every collection is removed, so tests pass in any
-// execution order (Req 12.11). The fixed seed fixture is layered on top of this in
-// tests/setup/seedFixture.js (task 2.6).
+// Per-test reset: every document of every collection is removed and the fixed seed
+// fixture is loaded again, so every test starts from the same known state and the suite
+// passes in any execution order (Req 12.11). The fixture contents live in
+// tests/setup/seedFixture.js.
 beforeEach(async () => {
     const collections = Object.values(mongoose.connection.collections);
     await Promise.all(collections.map((collection) => collection.deleteMany({})));
+    await seedFixture();
 });
 
 afterAll(async () => {

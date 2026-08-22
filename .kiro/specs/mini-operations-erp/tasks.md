@@ -10,7 +10,7 @@ Scope discipline: no file, function, or abstraction beyond what design.md names.
 
 ## Tasks
 
-- [ ] 1. Repository setup, project skeleton, cross-cutting middleware, and test harness
+- [x] 1. Repository setup, project skeleton, cross-cutting middleware, and test harness
   - [x] 1.1 Initialise and verify the git remote and repository hygiene
     - Run `git status` / `git remote -v`; if no repository exists run `git init`, and if no `origin` exists add `https://github.com/Varundhyani69/FundsRoomRound2`
     - Confirm the default branch name and that `git fetch origin` reaches the remote before any code is committed
@@ -71,44 +71,44 @@ Scope discipline: no file, function, or abstraction beyond what design.md names.
     - `backend/tests/errors.test.js` — `{ code, message }` envelope, `ROUTE_NOT_FOUND`, `MALFORMED_JSON`, `INTERNAL_ERROR` message hygiene, and the request log line format
     - _Requirements: 9.5, 9.6, 9.7, 9.8, 9.11, 9.12_
 
-  - [-] 1.12 Run the suite, commit, and push increment 1
+  - [x] 1.12 Run the suite, commit, and push increment 1
     - Run `npm test` in `backend/`; only proceed when it exits 0
     - `git add`, `git commit -m "Add project skeleton, config loader, error handling and test harness"`, `git push -u origin <default-branch>`
     - _Requirements: 14.1, 14.2, 14.7_
 
 - [ ] 2. Authentication
-  - [~] 2.1 Create the User model
+  - [x] 2.1 Create the User model
     - `backend/src/models/User.js` — unique lowercase trimmed `email` (≤ 254), `passwordHash` with `select: false`, `role` enum, nullable `assignedLocation` ObjectId reference, timestamps
     - _Requirements: 1.1, 1.5, 15.4_
 
-  - [~] 2.2 Implement the auth service
+  - [-] 2.2 Implement the auth service
     - `backend/src/services/auth.service.js` — `login(email, password)`: lookup with `+passwordHash`, `bcrypt.compare`, identical `INVALID_CREDENTIALS` AppError for unmatched email and failed comparison, `jsonwebtoken.sign({ sub, role }, config.jwtSecret, { expiresIn: '8h' })`, and a `hashPassword` helper at cost 10 used by the seed script
     - _Requirements: 1.1, 1.2, 1.3, 1.4, 1.5, 1.6, 1.10_
 
-  - [~] 2.3 Implement the validation middleware and shared schemas
+  - [x] 2.3 Implement the validation middleware and shared schemas
     - `backend/src/middleware/validate.js` — runs `params`/`query`/`body` schemas, attaches `req.validated`, maps `objectId` failures to `INVALID_IDENTIFIER` and everything else to `VALIDATION_ERROR` with one `details` entry per rejected field
     - `backend/src/validation/common.js` — `objectId`, `validQuantity`, `batch`, `customerName`
     - `backend/src/validation/auth.schemas.js` — strict login body schema (non-blank email ≤ 254, password ≤ 72)
     - _Requirements: 1.11, 9.1, 9.2, 9.3, 9.4, 9.10_
 
-  - [~] 2.4 Implement the authenticate middleware
+  - [-] 2.4 Implement the authenticate middleware
     - `backend/src/middleware/authenticate.js` — reads `Authorization: Bearer <token>`; absent, undecodable, badly signed, or expired all yield 401 `UNAUTHENTICATED`; on success sets `req.user = { id, role }` only
     - _Requirements: 1.7, 1.8, 1.9_
 
-  - [~] 2.5 Wire the auth route into the API router
+  - [x] 2.5 Wire the auth route into the API router
     - `backend/src/controllers/auth.controller.js`, `backend/src/routes/auth.routes.js` (`POST /api/auth/login`)
     - `backend/src/routes/index.js` — mount `auth.routes.js` before `authenticate`, then apply `authenticate` to every later router so no unauthenticated request reaches role evaluation
     - _Requirements: 1.8, 2.1_
 
-  - [~] 2.6 Add the per-test seed fixture users
+  - [x] 2.6 Add the per-test seed fixture users
     - `backend/tests/setup/seedFixture.js` — one User per Role with known passwords, plus a `tokenFor(role)` helper; loaded in `beforeEach` so tests pass in any order
     - _Requirements: 12.11_
 
-  - [ ]* 2.7 Write unit tests for authentication
+  - [x]* 2.7 Write unit tests for authentication
     - `backend/tests/auth.test.js` — login success payload excluding `passwordHash`, bcrypt hash format and cost band, JWT claims and 8-hour expiry, identical rejection shape for both failure modes, and the four token states against a protected route
     - _Requirements: 1.1, 1.2, 1.3, 1.4, 1.5, 1.6, 1.7, 1.8, 1.9, 1.11_
 
-  - [~] 2.8 Run the suite, commit, and push increment 2
+  - [-] 2.8 Run the suite, commit, and push increment 2
     - Run `npm test`; commit only on exit 0
     - `git commit -m "Add authentication with bcrypt hashing and JWT verification"`, then `git push`
     - _Requirements: 14.1, 14.2, 14.7_
