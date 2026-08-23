@@ -8,6 +8,7 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../auth/AuthContext.jsx';
+import DemoCredentials from '../components/DemoCredentials.jsx';
 
 export default function LoginScreen() {
     const { login } = useAuth();
@@ -84,6 +85,19 @@ export default function LoginScreen() {
                         {submitting ? 'Signing in…' : 'Sign in'}
                     </button>
                 </form>
+
+                {/* Renders nothing unless VITE_DEMO_PASSWORD was set at build
+                    time -- see the warning at the top of DemoCredentials.jsx.
+                    Fills the form rather than submitting it, and clears any
+                    previous rejection message so a stale error does not sit
+                    above freshly filled credentials. */}
+                <DemoCredentials
+                    onPick={(demoEmail, demoPassword) => {
+                        setEmail(demoEmail);
+                        setPassword(demoPassword);
+                        setError(null);
+                    }}
+                />
             </div>
         </main>
     );
