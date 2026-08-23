@@ -470,7 +470,7 @@ Scope discipline: no file, function, or abstraction beyond what design.md names.
     - `git commit -m "Add React frontend with five screens and role-gated controls"`, then `git push`
     - _Requirements: 14.1, 14.2, 14.3, 14.7_
 
-- [ ] 11. Documentation set
+- [x] 11. Documentation set
   - [x] 11.1 Write the README
     - `README.md` — tech stack, minimum Node.js and MongoDB versions, numbered setup steps, database setup including the `rs.initiate()` replica-set step, the full environment variable table with purpose/required/range/non-credential example, the verbatim commands to run the API server, the web client, the seed script, and the test suite, the seeded user emails with their roles and the environment variable supplying each password, the replica-set reason and the 3-retry limit, and links to the other documents
     - _Requirements: 8.6, 10.7, 13.1, 13.5, 13.7, 13.8_
@@ -493,7 +493,7 @@ Scope discipline: no file, function, or abstraction beyond what design.md names.
     - `backend/tests/docs.test.js` — asserts that the route table in `docs/api.md` matches the routes the app declares, that its error code list matches the keys of `src/errors/errorCodes.js`, and that its environment variable list matches the required set in `src/config/index.js`
     - _Requirements: 13.9_
 
-  - [ ] 11.6 Run the suite, commit, and push the documentation increment
+  - [x] 11.6 Run the suite, commit, and push the documentation increment
     - Run `npm test` in `backend/`; commit only on exit 0
     - `git commit -m "Add README, schema, API and extensibility documentation"`, then `git push`
     - _Requirements: 14.1, 14.2, 14.3, 14.7_
