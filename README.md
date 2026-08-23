@@ -6,12 +6,7 @@ The data lives in MySQL 8 with a fully normalised relational schema: ten tables,
 
 ## Live demo
 
-A review instance is running:
-
-- **Web client:** http://34.239.240.245:5173
-- **API base URL:** http://34.239.240.245:4000
-- **Raw OpenAPI spec:** http://34.239.240.245:4000/docs.json
-- **Health probe:** http://34.239.240.245:4000/health/ready
+A review instance is running at **http://34.239.240.245:5173**.
 
 Sign in with any of the three seeded roles:
 
@@ -162,7 +157,7 @@ npm test
 Import these two tracked files into Postman (**Import → Files**):
 
 - [`postman/mini-operations-erp.postman_collection.json`](postman/mini-operations-erp.postman_collection.json) — every route, grouped in folders, with a pre-filled JSON body where one is needed and the permitted roles in each request's description
-- [`postman/mini-operations-erp.postman_environment.json`](postman/mini-operations-erp.postman_environment.json) — `baseUrl` and `token`, so the same collection can be pointed at localhost or at the [live demo](#live-demo) by switching environment
+- [`postman/mini-operations-erp.postman_environment.json`](postman/mini-operations-erp.postman_environment.json) — `baseUrl` and `token`, so the same collection can be retargeted by switching environment rather than editing requests. It ships pointing at `http://localhost:4000`; set `baseUrl` to `http://34.239.240.245:4000` to run the collection against the [live demo](#live-demo) instead
 
 Send the login request first. Its test script reads the JWT out of the response and stores it in the `token` collection variable, and every other request already sends `Authorization: Bearer {{token}}` — so after one login the whole collection is authenticated with no copy-paste.
 
