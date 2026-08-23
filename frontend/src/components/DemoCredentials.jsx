@@ -10,18 +10,23 @@
 // acceptable for a throwaway review deployment seeded with sample rows, and it is
 // NOT acceptable for anything holding real data.
 //
-// It is opt-in for exactly that reason: the panel renders only when
-// VITE_DEMO_PASSWORD is set at BUILD time. Leave the variable unset and this
-// component returns null, so a local `npm run dev` and any normal build show no
-// credentials at all. There is no runtime switch, because a build without the
-// variable does not contain the password to begin with -- which is a stronger
-// guarantee than a flag someone can flip.
+// It is opt-in for exactly that reason: the panel renders only when at least one
+// of VITE_DEMO_ADMIN_PASSWORD, VITE_DEMO_OPS_PASSWORD and VITE_DEMO_SALES_PASSWORD
+// is set at BUILD time. Leave all three unset and this component returns null, so
+// a local `npm run dev` and any normal build show no credentials at all. There is
+// no runtime switch, because a build without the variables does not contain the
+// passwords to begin with -- which is a stronger guarantee than a flag someone can
+// flip.
 //
-// The three emails are the fixed addresses backend/scripts/seed.js creates. The
-// password is shared across all three, so set SEED_ADMIN_PASSWORD,
-// SEED_OPS_PASSWORD and SEED_SALES_PASSWORD to the same value as
-// VITE_DEMO_PASSWORD when you seed that deployment, or the buttons will fill a
-// password the server rejects.
+// The three emails are the fixed addresses backend/scripts/seed.js creates. Each
+// role has its own password, so set VITE_DEMO_ADMIN_PASSWORD, VITE_DEMO_OPS_PASSWORD
+// and VITE_DEMO_SALES_PASSWORD to the same values as the SEED_ADMIN_PASSWORD,
+// SEED_OPS_PASSWORD and SEED_SALES_PASSWORD used to seed that deployment, or the
+// buttons will fill a password the server rejects.
+//
+// Setting only some of them is legitimate -- a role whose password is absent is
+// simply omitted from the list, rather than shown with a button that fills an empty
+// password field and produces a confusing 401.
 
 // Substituted at build time by Vite. `undefined` when the variables were absent.
 // Three separate passwords since the seed script allows each role's password to differ.
@@ -62,9 +67,20 @@ const DEMO_ACCOUNTS = [
  *   sees which credentials went in and presses Sign in themselves.
  */
 export default function DemoCredentials({ onPick }) {
-    if (typeof DEMO_PASSWORD !== 'string' || DEMO_PASSWORD === '') {
+    // ENABLED is decided at build time, so this is not a feature flag that can be
+    // flipped in the browser: a build made without the variables has no password to
+    // reveal in the first place.
+    if (!ENABLED) {
         return null;
     }
+
+    // A build may legitimately set only one or two of the three variables. Dropping
+    // the unset roles here keeps a partially configured build honest -- three buttons
+    // where two fill an empty password field would read as a broken login rather than
+    // as a missing build variable.
+    const availableAccounts = DEMO_ACCOUNTS.filter(
+        (account) => typeof account.password === 'string' && account.password !== ''
+    );
 
     return (
         <div className="mt-6 rounded-lg border border-amber-200 bg-amber-50 p-4">
@@ -75,11 +91,13 @@ export default function DemoCredentials({ onPick }) {
                 Sample deployment. Pick a role to fill the form, then press Sign in.
             </p>
             <ul className="mt-3 space-y-1.5">
-                {DEMO_ACCOUNTS.map((account) => (
+                {availableAccounts.map((account) => (
                     <li key={account.email}>
                         <button
                             type="button"
-                            onClick={() => onPick(account.email, DEMO_PASSWORD)}
+                            // That account's own password, not a shared one: the seed
+                            // script gives each role a separate password.
+                            onClick={() => onPick(account.email, account.password)}
                             className="w-full rounded-md border border-amber-300 bg-white px-3 py-2 text-left text-xs text-slate-700 transition-colors hover:border-amber-400 hover:bg-amber-100"
                         >
                             <span className="font-medium text-slate-900">{account.role}</span>

@@ -49,6 +49,19 @@ RUN npm ci
 ARG VITE_API_BASE_URL
 ENV VITE_API_BASE_URL=$VITE_API_BASE_URL
 
+# Optional, and the deliberate exception to the "never a secret as a build arg" rule
+# above: these enable the login screen's click-to-fill demo panel, and their values
+# are throwaway demo passwords that the panel puts into the shipped bundle anyway, so
+# `docker history` reveals nothing the browser is not already given. Unset means
+# empty, which the component reads as "off" -- so a build without them still
+# succeeds and simply ships no panel.
+ARG VITE_DEMO_ADMIN_PASSWORD
+ARG VITE_DEMO_OPS_PASSWORD
+ARG VITE_DEMO_SALES_PASSWORD
+ENV VITE_DEMO_ADMIN_PASSWORD=$VITE_DEMO_ADMIN_PASSWORD
+ENV VITE_DEMO_OPS_PASSWORD=$VITE_DEMO_OPS_PASSWORD
+ENV VITE_DEMO_SALES_PASSWORD=$VITE_DEMO_SALES_PASSWORD
+
 COPY . .
 
 RUN npm run build

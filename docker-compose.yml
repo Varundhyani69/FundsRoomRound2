@@ -96,6 +96,20 @@ services:
         # URL the BROWSER can reach -- http://localhost:4000, never http://backend:4000,
         # which resolves only inside the Compose network.
         VITE_API_BASE_URL: ${VITE_API_BASE_URL}
+        # Optional, and BUILD-time for the same reason as the base URL above: they
+        # switch on the login screen's click-to-fill demo panel, and the values are
+        # substituted into the bundle. Leave them out of .env.docker and no panel is
+        # built. Each must match the corresponding SEED_* password, or the buttons
+        # fill a password the API rejects.
+        #
+        # These are the one case where a password as a build arg is acceptable: they
+        # are throwaway demo credentials that end up readable in the shipped bundle
+        # anyway, so the build arg leaks nothing the browser is not already handed.
+        # A real secret must NEVER be a build arg -- `docker history` shows every
+        # build arg of every layer, so it would be readable by anyone with the image.
+        VITE_DEMO_ADMIN_PASSWORD: ${VITE_DEMO_ADMIN_PASSWORD}
+        VITE_DEMO_OPS_PASSWORD: ${VITE_DEMO_OPS_PASSWORD}
+        VITE_DEMO_SALES_PASSWORD: ${VITE_DEMO_SALES_PASSWORD}
     restart: unless-stopped
     ports:
       # 5173 on the host to match the Vite dev-server port the project's CORS_ORIGIN

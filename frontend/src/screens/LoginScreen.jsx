@@ -4,16 +4,17 @@
 // stores nothing (login() throws before AuthContext stores anything),
 // retains the submitted email, and shows the rejection message (Req 11.16).
 // Disables the submit control while the request is in flight (Req 11.13).
+//
+// The demo-account panel below the form is build-time opt-in: DemoCredentials
+// renders nothing unless the VITE_DEMO_*_PASSWORD variables were set when the
+// bundle was built. A normal build therefore ships no credentials at all, and no
+// password value has to live in a tracked file (Req 13.8) -- which also means the
+// panel cannot go stale against a deployment whose seeded passwords differ.
 
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../auth/AuthContext.jsx';
-
-const DEMO_ACCOUNTS = [
-    { role: 'Admin', email: 'admin@mini-erp.local', password: 'admin-local-dev-pw' },
-    { role: 'OperationsUser', email: 'operations@mini-erp.local', password: 'ops-local-dev-pw' },
-    { role: 'SalesUser', email: 'sales@mini-erp.local', password: 'sales-local-dev-pw' },
-];
+import DemoCredentials from '../components/DemoCredentials.jsx';
 
 export default function LoginScreen() {
     const { login } = useAuth();
@@ -91,27 +92,17 @@ export default function LoginScreen() {
                     </button>
                 </form>
 
-                <div className="mt-6 rounded-lg border border-slate-200 bg-slate-50 p-4">
-                    <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">Demo Credentials</p>
-                    <table className="w-full text-xs text-slate-700">
-                        <thead>
-                            <tr className="border-b border-slate-200">
-                                <th className="pb-1 text-left font-medium">Role</th>
-                                <th className="pb-1 text-left font-medium">Email</th>
-                                <th className="pb-1 text-left font-medium">Password</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            {DEMO_ACCOUNTS.map((acc) => (
-                                <tr key={acc.role} className="border-b border-slate-100 last:border-0">
-                                    <td className="py-1 font-medium">{acc.role}</td>
-                                    <td className="py-1 font-mono">{acc.email}</td>
-                                    <td className="py-1 font-mono">{acc.password}</td>
-                                </tr>
-                            ))}
-                        </tbody>
-                    </table>
-                </div>
+                <DemoCredentials
+                    onPick={(demoEmail, demoPassword) => {
+                        // Fills the fields instead of submitting, so the reviewer sees
+                        // which account is about to be used and presses Sign in.
+                        setEmail(demoEmail);
+                        setPassword(demoPassword);
+                        // A stale rejection message next to freshly filled credentials
+                        // would look like the new pick had already failed.
+                        setError(null);
+                    }}
+                />
             </div>
         </main>
     );

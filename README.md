@@ -8,15 +8,9 @@ The data lives in MySQL 8 with a fully normalised relational schema: ten tables,
 
 A review instance is running at **http://34.239.240.245:5173**.
 
-Sign in with any of the three seeded roles:
+Sign in with any of the three seeded roles — `admin@mini-erp.local` (Admin), `operations@mini-erp.local` (OperationsUser), or `sales@mini-erp.local` (SalesUser). The login screen itself lists all three with a click-to-fill button each, so no password needs to be written down here.
 
-| Email | Password | Role |
-|---|---|---|
-| `admin@mini-erp.local` | `AdminDemo2026` | Admin |
-| `operations@mini-erp.local` | `OpsDemo2026` | OperationsUser |
-| `sales@mini-erp.local` | `SalesDemo2026` | SalesUser |
-
-It runs via Docker Compose on a single EC2 instance and is a throwaway review deployment seeded with sample data, so the credentials above are deliberately public and it holds nothing real.
+It runs via Docker Compose on a single EC2 instance and is a throwaway review deployment seeded with sample data, so those credentials are deliberately public and it holds nothing real.
 
 The public IP is not an Elastic IP, so it changes if the instance is restarted.
 
