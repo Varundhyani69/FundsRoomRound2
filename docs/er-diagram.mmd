@@ -1,95 +1,134 @@
+%% docs/er-diagram.mmd -- the tracked Mermaid source of the entity-relationship diagram.
+%% Embedded by docs/database-schema.md. Kept as its own file so the diagram is version
+%% controlled and diffable rather than pasted into prose.
+%%
+%% Generated from backend/src/db/schema.sql by hand and checked against it column by column.
+%% Every primary key is CHAR(24) holding a 24-character hex string (see backend/src/db/id.js);
+%% every FK column is named <relation>_id.
 erDiagram
-    CATEGORY ||--o{ ITEM : classifies
-    ITEM ||--o{ INVENTORY_RECORD : "stocked as"
-    LOCATION ||--o{ INVENTORY_RECORD : holds
-    INVENTORY_RECORD ||--o{ INVENTORY_TRANSACTION : "ledger rows"
-    USER ||--o{ INVENTORY_TRANSACTION : "createdBy (nullable)"
-    LOCATION ||--o{ USER : "assignedLocation (nullable)"
-    USER ||--o{ WORK_ORDER : "assignedUser"
-    USER ||--o{ WORK_ORDER : "createdBy"
-    ITEM ||--o{ WORK_ORDER : requires
-    LOCATION ||--o{ WORK_ORDER : "performed at"
-    ITEM ||--o{ INTERNAL_TRANSFER : moves
-    LOCATION ||--o{ INTERNAL_TRANSFER : "sourceLocation"
-    LOCATION ||--o{ INTERNAL_TRANSFER : "destinationLocation"
-    ITEM ||--o{ CUSTOMER_ORDER : ordered
-    LOCATION ||--o{ CUSTOMER_ORDER : "fulfilled from"
-    USER ||--o{ CUSTOMER_ORDER : "createdBy"
-    CUSTOMER_ORDER ||--|{ RESERVATION_ENTRY : "reserves via"
+    CATEGORIES ||--o{ ITEMS : "classifies"
+    ITEMS ||--o{ INVENTORY_RECORDS : "is stocked as"
+    LOCATIONS ||--o{ INVENTORY_RECORDS : "holds"
+    INVENTORY_RECORDS ||--o{ INVENTORY_TRANSACTIONS : "is moved by"
+    USERS |o--o{ INVENTORY_TRANSACTIONS : "applied"
 
-    CATEGORY {
-        string _id PK
-        string name UK
+    LOCATIONS |o--o{ USERS : "is assigned to"
+
+    ITEMS ||--o{ WORK_ORDERS : "is required by"
+    LOCATIONS ||--o{ WORK_ORDERS : "is worked at"
+    USERS ||--o{ WORK_ORDERS : "is assigned"
+
+    ITEMS ||--o{ INTERNAL_TRANSFERS : "is transferred"
+    LOCATIONS ||--o{ INTERNAL_TRANSFERS : "sends or receives"
+
+    ITEMS ||--o{ CUSTOMER_ORDERS : "is ordered"
+    LOCATIONS ||--o{ CUSTOMER_ORDERS : "fulfils from"
+    CUSTOMER_ORDERS ||--|{ CUSTOMER_ORDER_RESERVATIONS : "reserves via"
+    ITEMS ||--o{ CUSTOMER_ORDER_RESERVATIONS : "is reserved"
+    LOCATIONS ||--o{ CUSTOMER_ORDER_RESERVATIONS : "reserved at"
+
+    CATEGORIES {
+        char_24 id PK
+        varchar_120 name UK "unique"
+        datetime created_at
+        datetime updated_at
     }
-    ITEM {
-        string _id PK
-        string code UK
-        string name
-        objectId category FK
+
+    LOCATIONS {
+        char_24 id PK
+        varchar_32 code UK "unique"
+        varchar_120 name
+        datetime created_at
+        datetime updated_at
     }
-    LOCATION {
-        string _id PK
-        string code UK
-        string name
+
+    ITEMS {
+        char_24 id PK
+        varchar_32 code UK "unique"
+        varchar_120 name
+        char_24 category_id FK
+        datetime created_at
+        datetime updated_at
     }
-    USER {
-        string _id PK
-        string email UK
-        string passwordHash
-        string role
-        objectId assignedLocation FK
+
+    USERS {
+        char_24 id PK
+        varchar_254 email UK "unique, lowercased"
+        char_60 password_hash "bcrypt, never selected by a list query"
+        enum role "Admin | OperationsUser | SalesUser"
+        char_24 assigned_location_id FK "nullable"
+        datetime created_at
+        datetime updated_at
     }
-    INVENTORY_RECORD {
-        string _id PK
-        objectId item FK
-        objectId location FK
-        string batch
-        int physicalQuantity
-        int reservedQuantity
+
+    INVENTORY_RECORDS {
+        char_24 id PK
+        char_24 item_id FK "unique with location_id + batch"
+        char_24 location_id FK
+        varchar_32 batch "case-sensitive"
+        int_unsigned physical_quantity "CHECK <= 999999999"
+        int_unsigned reserved_quantity "CHECK <= physical_quantity"
+        datetime created_at
+        datetime updated_at
     }
-    INVENTORY_TRANSACTION {
-        string _id PK
-        objectId inventoryRecord FK
-        int physicalDelta
-        int reservedDelta
-        string movementReference UK
-        date appliedAt
-        objectId createdBy FK
+
+    INVENTORY_TRANSACTIONS {
+        char_24 id PK
+        char_24 inventory_record_id FK
+        int physical_delta "signed"
+        int reserved_delta "signed"
+        varchar_200 movement_reference UK "unique: the idempotency key"
+        datetime applied_at
+        char_24 created_by FK "nullable"
     }
-    WORK_ORDER {
-        string _id PK
-        objectId location FK
-        objectId item FK
-        int requiredQuantity
-        objectId assignedUser FK
-        string status
-        date statusChangedAt
-        objectId createdBy FK
+
+    WORK_ORDERS {
+        char_24 id PK
+        char_24 location_id FK
+        char_24 item_id FK
+        int_unsigned required_quantity "CHECK 1..1000000"
+        char_24 assigned_user_id FK
+        enum status "Assigned | InProgress | Completed"
+        datetime status_changed_at "nullable"
+        char_24 created_by FK "nullable"
+        datetime created_at
+        datetime updated_at
     }
-    INTERNAL_TRANSFER {
-        string _id PK
-        objectId item FK
-        string batch
-        objectId sourceLocation FK
-        objectId destinationLocation FK
-        int quantity
-        int receivedQuantity
-        string status
-        date dispatchedAt
-        date receivedAt
+
+    INTERNAL_TRANSFERS {
+        char_24 id PK
+        char_24 item_id FK
+        varchar_32 batch
+        char_24 source_location_id FK "CHECK <> destination"
+        char_24 destination_location_id FK
+        int_unsigned quantity "CHECK 1..1000000"
+        int_unsigned received_quantity "CHECK <= quantity"
+        enum status "Requested | Dispatched | Received"
+        datetime dispatched_at "nullable"
+        datetime received_at "nullable"
+        char_24 created_by FK "nullable"
+        datetime created_at
+        datetime updated_at
     }
-    CUSTOMER_ORDER {
-        string _id PK
-        string customerName
-        objectId item FK
-        objectId location FK
-        int quantity
-        string status
-        objectId createdBy FK
+
+    CUSTOMER_ORDERS {
+        char_24 id PK
+        varchar_120 customer_name
+        char_24 item_id FK
+        char_24 location_id FK
+        int_unsigned quantity "CHECK 1..1000000"
+        enum status "Reserved | Cancelled"
+        char_24 created_by FK "nullable"
+        datetime created_at
+        datetime updated_at
     }
-    RESERVATION_ENTRY {
-        objectId item FK
-        objectId location FK
-        string batch
-        int quantity
+
+    CUSTOMER_ORDER_RESERVATIONS {
+        char_24 id PK
+        char_24 customer_order_id FK "ON DELETE CASCADE"
+        char_24 item_id FK
+        char_24 location_id FK
+        varchar_32 batch "unique with customer_order_id + item + location"
+        int_unsigned quantity "CHECK 1..1000000"
+        datetime created_at
     }

@@ -1,37 +1,57 @@
 # Extensibility
 
-This document names, for four specific live-change requests an evaluator might ask for, the
-module, the named function(s) to edit, and the schema field to add or that already exists to
-support the change. None of these changes are implemented — this is a description of what a
+For four specific live-change requests an evaluator might ask for, this document names the
+module, the named function(s) to edit, and the schema column to add or that already exists to
+support the change. **None of these changes are implemented** — this is a description of what a
 small change would actually touch, grounded in the code as it exists today.
+
+The relational schema lives in one file,
+[`backend/src/db/schema.sql`](../backend/src/db/schema.sql), and there is no ORM, so every
+change below is "edit this SQL, edit this service function" rather than "edit a model and hope
+nothing else restated the rule."
 
 ## 1. Adding a damaged quantity that reduces available stock
 
-**Module:** `backend/src/services/availability.js`
+**Modules:** `backend/src/services/availability.js` and `backend/src/db/schema.sql`.
 
-**Functions to edit:** `availableQuantity(record)` and `hasAvailableAtLeastExpr(quantity)`.
+**Functions to edit:** `availableQuantity(record)`, and the two SQL forms of the same rule,
+`AVAILABLE_SQL` and `AVAILABLE_SQL_FOR(alias)`.
 
-`availableQuantity` currently returns `record.physicalQuantity - record.reservedQuantity`. It
-would change to also subtract a new `damagedQuantity` field, e.g.
-`record.physicalQuantity - record.reservedQuantity - record.damagedQuantity`.
-`hasAvailableAtLeastExpr` builds the same rule as a MongoDB `$expr` filter fragment for
-conditional updates (`$subtract: ['$physicalQuantity', '$reservedQuantity']`); its `$subtract`
-array would need the same new field appended so the database-side check stays consistent with
-the JavaScript-side check.
+`availability.js` is the only module in the codebase that subtracts `reserved_quantity` from
+`physical_quantity`, and it deliberately holds three shapes of that one rule:
 
-**Schema field to add:** a `damagedQuantity` field on `InventoryRecord`
-(`backend/src/models/InventoryRecord.js`), most naturally reusing the existing
-`nonNegativeCount` field helper from `backend/src/models/fields.js` the way
-`physicalQuantity` and `reservedQuantity` already do, defaulting to 0.
+| Export | Shape | Consumed by |
+|---|---|---|
+| `availableQuantity(record)` | JavaScript | Every read path and in-process guard |
+| `AVAILABLE_SQL`, `AVAILABLE_SQL_FOR(alias)` | SQL expression | The `SELECT`s that project availability as a derived column |
+| `hasAvailableAtLeastSql(qty)` | SQL predicate + bound param | The `WHERE` clause of every conditional `UPDATE` |
 
-**Honest scope note:** this is genuinely small on the read side, because every availability
-read and every quantity guard across the whole codebase (Work_Order_Service,
-Transfer_Service, Order_Service) calls into this one module rather than repeating the
-subtraction. What this change does *not* include is any route or service function that
-actually sets `damagedQuantity` to a non-zero value — there is currently no "mark N units
-damaged" operation anywhere. Adding the field and the subtraction is small; adding a full
-damage-reporting workflow (a new mutation path, a new movement reference type, a new ledger
-delta, validation, authorization) would be a separate, larger piece of work.
+The change is to subtract a new `damaged_quantity` in `availableQuantity`, and add the same
+column to `AVAILABLE_SQL` and `AVAILABLE_SQL_FOR`. `hasAvailableAtLeastSql` is built on top of
+those two, so every conditional update's guard follows automatically and the database-side
+check cannot drift from the JavaScript-side check.
+
+**Schema change:** add `damaged_quantity INT UNSIGNED NOT NULL DEFAULT 0` to
+`inventory_records` in `schema.sql`, alongside `physical_quantity` and `reserved_quantity` and
+matching their `UNSIGNED` type so the database refuses a negative. Then extend
+`ck_inventory_reserved_lte_physical` — currently `reserved_quantity <= physical_quantity` — to
+`reserved_quantity + damaged_quantity <= physical_quantity`, so the invariant that makes
+available quantity non-negative stays true against the new definition. That is the part worth
+noticing: because the invariant is a `CHECK` constraint rather than only an `if` in a service,
+changing the availability formula forces you to restate the invariant in the schema too, and
+the database will then hold it.
+
+Since the schema is applied by `CREATE TABLE IF NOT EXISTS`, an existing database also needs a
+migration statement (`ALTER TABLE inventory_records ADD COLUMN ...`) — `scripts/migrate.js`
+applies `schema.sql` idempotently but does not diff existing tables against it.
+
+**Honest scope note:** genuinely small on the read side, because every availability read and
+every quantity guard across Work_Order_Service, Transfer_Service, and Order_Service calls into
+this one module instead of repeating the subtraction. What it does *not* include is any route
+or service function that actually *sets* `damaged_quantity` to a non-zero value — there is no
+"mark N units damaged" operation anywhere. Adding the column and the subtraction is small;
+adding a damage-reporting workflow (a mutation path, a new movement-reference kind, a ledger
+delta, validation, authorization) is a separate, larger piece of work.
 
 ## 2. Allowing a transfer to be partially received
 
@@ -39,95 +59,128 @@ delta, validation, authorization) would be a separate, larger piece of work.
 
 **Function to edit:** `receiveTransfer`.
 
-Today `receiveTransfer` always sets `transfer.receivedQuantity = transfer.quantity` and moves
-`transfer.status` straight to `'Received'` — there is no partial path. Supporting a partial
-receipt would mean changing the function to accept a requested receipt quantity (rather than
-always receiving the full remaining amount), applying that smaller quantity to the destination
-`Inventory_Record` through `applyMovement` instead of the full `transfer.quantity`, and
-incrementing `receivedQuantity` by that amount rather than setting it outright. The guard that
-currently treats any accepted receipt as terminal (`assertTransferTransition`'s
-`Received`-to-`Received` carve-out, which throws `TRANSFER_ALREADY_RECEIVED`) would need a new
-rule: a transfer should only move to `Received` once `receivedQuantity` reaches `quantity`,
-and stay at `Dispatched` (or a new intermediate status) while a partial amount remains
-outstanding.
+Today `receiveTransfer` always books in the full amount: it calls `applyMovement` with
+`physicalDelta: transfer.quantity`, then sets `received_quantity = transfer.quantity` and
+`status = 'Received'` in one `UPDATE`. There is no partial path.
 
-**Schema field already in place:** `receivedQuantity` on `InternalTransfer`
-(`backend/src/models/InternalTransfer.js`) already exists and is already bounded between 0
-and the transfer's own `quantity` by a schema validator (`value <= this.quantity`), not by a
-fixed number. The field's own comment in the model states this was deliberate: the upper
-bound reads `this.quantity` specifically so a future partial-receipt feature can set any
-intermediate value without touching the schema. That part really is already done — the field
-exists precisely to make this change small on the data-model side.
+Supporting a partial receipt means:
 
-**Honest scope note:** the schema is ready, but the service logic is not just a one-line
-edit. Deciding what "partially received" means for `Transfer_Status` (a new status value, or
-keep `Dispatched` until fully received) is a real design decision, and the API request shape
-for `POST /api/transfers/:id/receive` would need to accept a quantity instead of taking a
-fixed empty body as it does today. This is a moderate change concentrated in one function and
-one route, not a one-line edit.
+1. Accepting a requested receipt quantity, rather than always using `transfer.quantity`.
+2. Passing that smaller amount as `physicalDelta` to `applyMovement`.
+3. Changing the `UPDATE` from `received_quantity = ?` to
+   `received_quantity = received_quantity + ?`, so successive receipts accumulate.
+4. Changing the movement reference. `transferMovementReference(transfer.id, 'RECEIPT')` is
+   unique per transfer, which is exactly what currently makes a second receipt impossible —
+   the unique index on `movement_reference` refuses it. Partial receipts need a reference that
+   is unique per *receipt event*, not per transfer, or the second partial receipt would be
+   rejected as a duplicate.
+5. Relaxing the terminal guard. `assertTransferTransition`'s `Received`-to-`Received` carve-out
+   throws `TRANSFER_ALREADY_RECEIVED`; the new rule is that a transfer reaches `Received` only
+   once `received_quantity` equals `quantity`, and stays `Dispatched` (or a new intermediate
+   status) while any amount is outstanding.
+
+**Schema already in place:** `internal_transfers.received_quantity` exists as its own
+`INT UNSIGNED` column rather than being derived from `status`, and
+`ck_internal_transfers_received_lte_quantity` bounds it above by the transfer's own `quantity`
+rather than by a fixed number. The column comment in `schema.sql` states this was deliberate:
+it can hold any value strictly between 0 and `quantity` without a schema change, and the
+constraint guarantees a partial-receipt implementation still cannot book in more than was
+sent. That part really is already done.
+
+**Honest scope note:** the schema is ready and the constraint is already the right one, but
+point 4 is the trap — the idempotency mechanism that currently protects against a double
+receipt is the same mechanism a partial receipt has to work around, and getting that wrong
+either breaks partial receipts or silently reopens the double-apply hole. Plus the API request
+shape for `POST /api/transfers/:id/receive` would need to accept a quantity instead of the
+fixed empty body it takes today, with a new zod schema. Moderate change, concentrated in one
+function, one reference builder, and one route.
 
 ## 3. Cancelling a customer order and releasing its reservation
 
 **Module:** `backend/src/services/order.service.js`
 
-**Function to add:** a new function, e.g. `cancelOrder(orderId)`. There is no cancellation
-function today — `order.service.js` currently exports only `reserveAcrossBatches`,
-`createOrder`, `listOrders`, and `getOrder`.
+**Function to add:** a new `cancelOrder(orderId)`. There is no cancellation today —
+`order.service.js` exports `createOrder`, `listOrders`, `getOrder`, `findOrderById`, and
+`reserveAcrossBatches`, and `customer_orders.status` already has `'Cancelled'` in its `ENUM`
+with nothing that ever sets it.
 
-The new function would look up the `CustomerOrder` by id, reject if its `status` is already
-`'Cancelled'` or if the id does not exist (`NOT_FOUND`, matching the pattern `getOrder`
-already uses), and otherwise, inside one `withTransaction` call, walk the order's
-`reservations` list and for each entry reduce the `reservedQuantity` of the
-`InventoryRecord` it names by that entry's `quantity` (the inverse of what
-`reserveAcrossBatches` did when it created the reservation), writing one ledger row per
-changed record the same way `reserveAcrossBatches` does today with
-`reserveMovementReference`. It would then set the order's `status` to `'Cancelled'`.
+The new function would, inside one `withTransaction` call:
 
-**Schema field already in place:** the `reservations` entry list on `CustomerOrder`
-(`backend/src/models/CustomerOrder.js`). Each entry already names exactly one `item`,
-`location`, `batch`, and `quantity` — precisely the four pieces of information needed to find
-the `InventoryRecord` an entry drew from and release the right amount from it. The model's own
-comment states this was the reason the list is embedded on the order rather than kept only as
-ledger rows: cancellation needs "no join, no ledger scan, just the entries already sitting on
-the order itself." That reasoning holds up when read against the code — no other lookup is
-needed to know what to release.
+1. `SELECT ... FOR UPDATE` the order row, reject with `NOT_FOUND` if absent and with a new
+   code (or `INVALID_STATUS_TRANSITION`) if `status` is already `'Cancelled'`. The row lock is
+   what makes two concurrent cancellations of one order safe.
+2. Read the order's rows from `customer_order_reservations` — the existing `loadReservations`
+   already does exactly this query.
+3. For each line, find the `inventory_records` row it names by `(item_id, location_id, batch)`
+   and decrease its `reserved_quantity` by the line's `quantity`, as a guarded conditional
+   update in the same style as `reserveAcrossBatches`:
+   `UPDATE inventory_records SET reserved_quantity = reserved_quantity - ? WHERE id = ? AND reserved_quantity >= ?`,
+   deciding on `affectedRows` — not a blind decrement.
+4. Write one `inventory_transactions` row per changed record with a **negative**
+   `reserved_delta`, using a cancellation-specific movement reference so the unique index makes
+   a replayed cancellation fail rather than double-release.
+5. Set the order's `status` to `'Cancelled'`.
 
-**Honest scope note:** the data needed to release the reservation is already sitting on the
-document, which makes the core loop straightforward. What is not yet decided is the API
-surface (a new route, e.g. `POST /api/orders/:id/cancel`, a new entry in
-`WRITE_ROUTE_PERMISSIONS`, a new validation schema for an empty-body request) and any question
-of whether the underlying `InventoryRecord` for a reservation entry could have been deleted or
-changed since the reservation was made — the write would need the same guarded, filter-based
-update style `reserveAcrossBatches` uses rather than a blind decrement, to stay consistent
-with how every other quantity mutation in this codebase is written.
+**Schema already in place:** `customer_order_reservations`. Each row already names exactly one
+`item_id`, `location_id`, `batch`, and `quantity` — precisely the four pieces of information
+needed to find the `inventory_records` row a line drew from and release the right amount from
+it. No ledger scan, no reconstruction: one indexed lookup per line.
+`ix_reservation_item_location_batch` even serves the reverse direction if you ever need "which
+orders hold stock in this batch."
+
+The `reserved_quantity >= ?` guard in step 3 is not paranoia — it is the mirror of the
+availability guard, and it means a release can never drive `reserved_quantity` negative even if
+the lines and the balances somehow disagreed. `INT UNSIGNED` on the column would refuse it
+anyway, but with an out-of-range driver error rather than a clean 409.
+
+**Honest scope note:** the data needed is already sitting in the child table, which makes the
+core loop straightforward. Undecided: the API surface (`POST /api/orders/:id/cancel`, an entry
+in `WRITE_ROUTE_PERMISSIONS`, an empty-body zod schema, a new error code for
+"already cancelled"), and the new movement-reference kind in `movementReference.js`. Small, but
+it touches five files.
 
 ## 4. Restricting a user to their assigned location
 
-**Module:** `backend/src/middleware/authorize.js`
+**Modules:** `backend/src/middleware/authorize.js` and `backend/src/middleware/authenticate.js`
 
-**What to add:** a location-comparison check added alongside the existing role check in the
-`authorize` function. Today `authorize` checks only `req.user.role` against
-`WRITE_ROUTE_PERMISSIONS` — it has no notion of location at all. A location restriction would
-mean, for routes whose body or resolved resource names a `location` (e.g. creating an
-`Inventory_Record`, dispatching or receiving an `Internal_Transfer` at a given location,
-creating a `Work_Order`), comparing `req.user.assignedLocation` against that route's location
-and calling `next(forbidden())` when they differ and `assignedLocation` is not null. In plain
-language: "if this user has an assigned location and the request targets a different
-location, deny it the same way an unpermitted role is denied today."
+**What to add:** a location comparison alongside the existing role check in `authorize`. Today
+`authorize` checks two things and nothing else: that `req.user.role` is one of the three
+declared roles, and that the role appears in `WRITE_ROUTE_PERMISSIONS` for the matched route
+key. It has no notion of location.
 
-**Schema field already in place:** `assignedLocation` on `User`
-(`backend/src/models/User.js`) already exists, is already nullable (null meaning "not tied to
-a site," as the field's own comment states), and already references a `Location` document by
-`ObjectId`. `authenticate.js` does not currently attach `assignedLocation` to `req.user`
-(today `req.user` is only `{ id, role }`), so part of this change is also extending what
-`authenticate` puts on the request, not only what `authorize` checks.
+The change: for write routes whose body or resolved resource names a location — creating an
+`inventory_record`, dispatching or receiving an `internal_transfer`, creating a `work_order` —
+compare `req.user.assignedLocation` against that route's location and call `next(forbidden())`
+when they differ and `assignedLocation` is not null. In plain language: "if this user is tied
+to a site and the request targets a different site, deny it exactly the way an unpermitted role
+is denied today," reusing the single `forbidden()` builder so every denial stays
+indistinguishable to the client.
 
-**Honest scope note:** the field exists and the enum-role-check-first pattern in `authorize`
-is a reasonable place to hang a second check, but this is not a single-line addition. It
-touches `authenticate.js` (to put `assignedLocation` on `req.user`), `authorize.js` (to add
-the comparison), and — because the location relevant to a request lives in different places
-for different routes (the request body for creation, the route's resolved document for
-dispatch/receive) — the comparison itself is not uniform across routes, so it can't be a
-single generic rule without deciding, route by route, where the request's target location
-comes from. It is a small, well-contained change per the design's intent, but "small" here
-means a few functions across two files, not one line in one file.
+**Schema already in place:** `users.assigned_location_id` is `CHAR(24) NULL`, references
+`locations(id)`, and is indexed by `ix_users_assigned_location`. `NULL` already means "not tied
+to a site," which is what an Admin gets. Nothing needs to change in the schema.
+
+**What does need changing beyond `authorize`:** `authenticate.js` puts exactly
+`{ id: payload.sub, role: payload.role }` on `req.user` — deliberately, so nothing downstream
+can read an undeclared claim. So the assigned location has to get there first, and there is a
+real choice: add it to the JWT payload in `auth.service.js` (fast, no query per request, but
+stale until the user's next login) or look it up from `users` per request (always current,
+costs a query on every authenticated call). For a location assignment that changes rarely and
+is a *restriction* rather than a grant, a stale value is a security-relevant staleness, which
+argues for the query.
+
+**Honest scope note:** the column exists and the role-check-first structure of `authorize` is a
+reasonable place to hang a second check, but this is not a one-liner. It touches
+`authenticate.js`, `authorize.js`, and probably `auth.service.js`, and — because the location
+relevant to a request lives in different places for different routes (the request body for
+creation, the transfer's own `source_location_id`/`destination_location_id` for
+dispatch/receive, which is only known after a database read) — the comparison is not uniform.
+Dispatch and receive in particular would need the middleware to read the transfer row, which
+means either a query in the middleware or moving the check into the service. Deciding that,
+route by route, is the actual work. A few functions across three files, not one line in one
+file.
+
+---
+
+For how the constraints, transactions, and row locks referenced throughout this document fit
+together, see [`docs/data-integrity.md`](./data-integrity.md).

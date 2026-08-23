@@ -79,9 +79,9 @@ export default function InventoryScreen() {
     // text box is not something a person can fill in from memory).
     const { items, locations } = useReferenceData({ items: true, locations: true });
 
-    // Creation form state. Plain text inputs for the ObjectId fields, the
-    // same choice WorkOrdersScreen/TransfersScreen already make, since this
-    // screen has no dropdown-populating requirement.
+    // Creation form state. Item and Location are chosen from the reference
+    // dropdowns loaded above -- a raw 24-character hex id is not something a
+    // person can type from memory -- so these hold the selected ids.
     const [formItem, setFormItem] = useState('');
     const [formLocation, setFormLocation] = useState('');
     const [formBatch, setFormBatch] = useState('');

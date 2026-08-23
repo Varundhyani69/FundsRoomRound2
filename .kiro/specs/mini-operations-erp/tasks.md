@@ -2,11 +2,11 @@
 
 ## Overview
 
-Eleven top-level tasks that follow the ten increments of the design's Incremental Delivery Plan (increment 10 is split into frontend and documentation so no commit introduces more than three capabilities, Req 14.3). Stack is MERN in plain JavaScript, no TypeScript: `backend/` (Express + Mongoose, Jest + Supertest + `mongodb-memory-server` single-node replica set + fast-check) and `frontend/` (Vite + React, Vitest + React Testing Library), both at the repository root.
+Eleven top-level tasks that follow the ten increments of the design's Incremental Delivery Plan (increment 10 is split into frontend and documentation so no commit introduces more than three capabilities, Req 14.3). Stack is Express + MySQL 8 + React in plain JavaScript, no TypeScript: `backend/` (Express with hand-written SQL through `mysql2`, Jest + Supertest against a throwaway `<MYSQL_DATABASE>_test` database + fast-check) and `frontend/` (Vite + React, Vitest + React Testing Library), both at the repository root.
 
 Every top-level task ends with a sub-task that runs the test suite and then stages, commits, and pushes to `https://github.com/Varundhyani69/FundsRoomRound2`, so the repository history shows the increments (Req 14.1, 14.2, 14.7). Nothing is committed before task 1.1 has verified the remote.
 
-Scope discipline: no file, function, or abstraction beyond what design.md names. Layering is routes → controllers → services → models plus middleware, and every quantity comparison and status transition lives in a named exported service function (Req 15.5).
+Scope discipline: no file, function, or abstraction beyond what design.md names. Layering is routes → controllers → services → SQL plus middleware, and every quantity comparison and status transition lives in a named exported service function (Req 15.5).
 
 ## Tasks
 
@@ -19,13 +19,13 @@ Scope discipline: no file, function, or abstraction beyond what design.md names.
     - _Requirements: 14.2, 14.4, 14.5_
 
   - [x] 1.2 Create the backend package and folder skeleton
-    - `backend/package.json` with scripts `start`, `dev`, `test` (`jest --runInBand`), `seed`; dependencies `express`, `mongoose`, `bcrypt`, `jsonwebtoken`, `zod`, `cors`, `dotenv`; devDependencies `jest`, `supertest`, `mongodb-memory-server`, `fast-check` — all at pinned versions
-    - Create the empty directory layout from design.md: `backend/src/{config,db,models,middleware,errors,services,controllers,routes,validation}`, `backend/scripts`, `backend/tests/setup`
-    - `backend/.env.example` listing `MONGODB_URI`, `JWT_SECRET`, `PORT`, `CORS_ORIGIN`, `SEED_ADMIN_PASSWORD`, `SEED_OPS_PASSWORD`, `SEED_SALES_PASSWORD` with placeholder non-credential values
+    - `backend/package.json` with scripts `start`, `dev`, `test` (`jest --runInBand`), `migrate`, `seed`; dependencies `express`, `mysql2`, `bcrypt`, `jsonwebtoken`, `zod`, `cors`, `dotenv`; devDependencies `jest`, `supertest`, `fast-check` — all at pinned versions. No in-memory MySQL exists, so no such package is added: the suite runs against a real server in its own database (task 1.8)
+    - Create the empty directory layout from design.md: `backend/src/{config,db,middleware,errors,services,controllers,routes,validation}`, `backend/scripts`, `backend/tests/setup`
+    - `backend/.env.example` listing `MYSQL_HOST`, `MYSQL_PORT`, `MYSQL_USER`, `MYSQL_PASSWORD`, `MYSQL_DATABASE`, `JWT_SECRET`, `PORT`, `CORS_ORIGIN`, `SEED_ADMIN_PASSWORD`, `SEED_OPS_PASSWORD`, `SEED_SALES_PASSWORD` with placeholder non-credential values, and a note that the test suite uses `<MYSQL_DATABASE>_test` rather than the database named here
     - _Requirements: 10.6, 10.7, 14.6_
 
   - [x] 1.3 Implement the config loader
-    - `backend/src/config/index.js` — the only module that reads `process.env`; exactly four required variables, single stderr message naming every missing one, `process.exit(1)`, port range 1–65535 check, `JWT_SECRET` length ≥ 32 check, no defaults
+    - `backend/src/config/index.js` — the only module that reads `process.env`; exactly eight required variables (`MYSQL_HOST`, `MYSQL_PORT`, `MYSQL_USER`, `MYSQL_PASSWORD`, `MYSQL_DATABASE`, `JWT_SECRET`, `PORT`, `CORS_ORIGIN`), with `MYSQL_PASSWORD` required to be present but allowed to be empty because a passwordless local MySQL is a legitimate setup; single stderr message naming every missing one, `process.exit(1)`, 1–65535 range check on both `MYSQL_PORT` and `PORT`, `JWT_SECRET` length ≥ 32 check, no defaults; the resolved settings are grouped as `config.mysql` so a caller hands them straight to `mysql2`'s `createPool`
     - _Requirements: 10.1, 10.2, 10.3, 10.4, 10.5, 10.9, 10.10_
 
   - [x] 1.4 Implement AppError and the error code table
@@ -42,19 +42,23 @@ Scope discipline: no file, function, or abstraction beyond what design.md names.
   - [x] 1.6 Assemble the Express app and the server process
     - `backend/src/app.js` — CORS with the single configured origin, `express.json()`, `requestLog`, `/api` router mount point, `notFound`, `errorHandler` last; exports the app without listening so Supertest can drive it in-process
     - `backend/src/routes/index.js` — empty `/api` router for now, routers mounted in later increments
-    - `backend/src/server.js` — config → connect → listen, plus `SIGINT`/`SIGTERM` handling that closes the server and the Mongoose connection, exits 0, and forces `process.exit(1)` after a 10-second deadline
+    - `backend/src/server.js` — config → connect → listen, plus `SIGINT`/`SIGTERM` handling that stops accepting connections and closes the MySQL pool — which ends every open connection and rolls back any transaction still in progress on them — exits 0, and forces `process.exit(1)` after a 10-second deadline
     - _Requirements: 8.4, 9.1, 12.13_
 
   - [x] 1.7 Implement the database connection module
-    - `backend/src/db/connect.js` — `mongoose.connect` with the configured URI and a startup log line stating whether the deployment reports a replica-set name
+    - `backend/src/db/pool.js` — the one lazily created `mysql2` promise pool (`connectionLimit: 10`, `multipleStatements: false`, positional `?` placeholders only), plus `query`, `closePool`, and `isPoolOpen`
+    - `backend/src/db/id.js` — `newId()`, the 24-character lowercase hex primary key every table uses, so the id shape the API already validates is unchanged
+    - `backend/src/db/schema.sql` and `backend/scripts/migrate.js` behind `npm run migrate` — the schema file each later increment appends its `CREATE TABLE` to, and the runner that creates the database if absent and applies every statement of that file; idempotent, because each statement is `CREATE TABLE IF NOT EXISTS`
+    - `backend/src/db/connect.js` — opens the pool from `config.mysql`, round-trips `SELECT VERSION()` so a bad host or credential fails before the port is bound, and logs one startup line naming the server version and whether every transactional table is on InnoDB (`checkStorageEngines`), warning instead when the schema has not been migrated; `disconnect()` closes the pool
     - _Requirements: 8.1, 8.6_
 
-  - [x] 1.8 Build the test harness with the in-memory replica set
-    - `backend/jest.config.js` — `globalSetup`, `globalTeardown`, `setupFilesAfterEnv`, `testEnvironment: 'node'`, serial execution
-    - `backend/tests/setup/globalSetup.js` — `MongoMemoryReplSet.create({ replSet: { count: 1, storageEngine: 'wiredTiger' } })`, sets `MONGODB_URI`, `JWT_SECRET`, `PORT`, `CORS_ORIGIN`
-    - `backend/tests/setup/globalTeardown.js` — stops the replica set
-    - `backend/tests/setup/assertReplicaSet.js` — `hello` command check, stderr reason and non-zero exit when no `setName` is reported, run before any test
-    - `backend/tests/setup/dbSetup.js` — connect once, `beforeEach` deletion of every document in every collection, disconnect after all
+  - [x] 1.8 Build the test harness against a throwaway MySQL database
+    - `backend/jest.config.js` — `globalSetup`, `globalTeardown`, `setupFilesAfterEnv`, `testEnvironment: 'node'`, `maxWorkers: 1` serial execution
+    - `backend/tests/setup/globalSetup.js` — drops and recreates `<MYSQL_DATABASE>_test` beside the application's own database and applies `src/db/schema.sql` to it through `scripts/migrate.js`, the same code path `npm run migrate` uses; writes the resolved `MYSQL_*`, `JWT_SECRET`, `PORT`, `CORS_ORIGIN` values to a gitignored JSON handoff file, since assignments to `process.env` here do not reach the workers
+    - `backend/tests/setup/globalTeardown.js` — drops the test database again and removes the handoff file
+    - `backend/tests/setup/assertTransactional.js` — `checkStorageEngines()` check, stderr reason and non-zero exit when any table is missing or is not InnoDB, run before any test, because `BEGIN`/`COMMIT`/`ROLLBACK` are accepted and then silently ignored on other engines
+    - `backend/tests/setup/dbSetup.js` — loads the handoff file into `process.env` before anything requires `src/config`, connects once, `beforeEach` deletion of every row from every table child-table-first so each foreign key stays satisfied, disconnect after all
+    - `backend/tests/setup/tables.js` — one small SQL-backed read accessor per table (`find`, `findOne`, `findById`, `countDocuments`, `exists`, with `.sort()`/`.lean()` chaining) returning rows under the camelCase names the assertions read, so a test that checks stored state reads as what it is checking rather than as a query string; plus `create`/`updateOne`/`updateMany` for arranging a precondition no route can express
     - `backend/tests/setup/agent.js` — Supertest agent over the exported app
     - _Requirements: 12.8, 12.9, 12.10, 12.11_
 
@@ -77,12 +81,14 @@ Scope discipline: no file, function, or abstraction beyond what design.md names.
     - _Requirements: 14.1, 14.2, 14.7_
 
 - [x] 2. Authentication
-  - [x] 2.1 Create the User model
-    - `backend/src/models/User.js` — unique lowercase trimmed `email` (≤ 254), `passwordHash` with `select: false`, `role` enum, nullable `assignedLocation` ObjectId reference, timestamps
+  - [x] 2.1 Create the users table
+    - `backend/src/db/schema.sql` — `CREATE TABLE users`: `id` CHAR(24) primary key, `email` VARCHAR(254) under `uq_users_email`, `password_hash` CHAR(60), `role` ENUM(`'Admin'`, `'OperationsUser'`, `'SalesUser'`), nullable `assigned_location_id`, `created_at`/`updated_at` DATETIME(3), InnoDB and `utf8mb4_0900_as_cs`
+    - `fk_users_assigned_location` ON DELETE SET NULL ON UPDATE RESTRICT, so removing a location leaves its people unassigned rather than deleted; the `locations` table it references is declared ahead of `users` in the file and lands with task 4.1
+    - The service trims and lowercases `email` before binding it, so the unique index compares like with like; `password_hash` is named by no query except the login lookup, so it cannot reach a response by accident
     - _Requirements: 1.1, 1.5, 15.4_
 
   - [x] 2.2 Implement the auth service
-    - `backend/src/services/auth.service.js` — `login(email, password)`: lookup with `+passwordHash`, `bcrypt.compare`, identical `INVALID_CREDENTIALS` AppError for unmatched email and failed comparison, `jsonwebtoken.sign({ sub, role }, config.jwtSecret, { expiresIn: '8h' })`, and a `hashPassword` helper at cost 10 used by the seed script
+    - `backend/src/services/auth.service.js` — `login(email, password)`: the one `SELECT id, email, password_hash, role, assigned_location_id FROM users WHERE email = ?` lookup, `bcrypt.compare`, identical `INVALID_CREDENTIALS` AppError for unmatched email and failed comparison, `jsonwebtoken.sign({ sub, role }, config.jwtSecret, { expiresIn: '8h' })`, and a `hashPassword` helper at cost 10 used by the seed script
     - _Requirements: 1.1, 1.2, 1.3, 1.4, 1.5, 1.6, 1.10_
 
   - [x] 2.3 Implement the validation middleware and shared schemas
@@ -125,7 +131,7 @@ Scope discipline: no file, function, or abstraction beyond what design.md names.
 
   - [x]* 3.3 Write unit tests for authorize and the permission map
     - `backend/tests/authorization.test.js` — role × route matrix over `authenticate` + `authorize` mounted on stub write routes in a test-only app (`backend/tests/setup/authorizeTestApp.js`), unknown-role and unmapped-route denial, and a completeness assertion that every write route the real app declares has exactly one entry in `WRITE_ROUTE_PERMISSIONS`
-    - Note: mandatory test 5 needs a real restricted write route with a targeted document, so it is added to this same file in task 5.12, as soon as `POST /api/inventory` exists
+    - Note: mandatory test 5 needs a real restricted write route with a targeted row, so it is added to this same file in task 5.12, as soon as `POST /api/inventory` exists
     - _Requirements: 2.1, 2.3, 2.5, 2.7, 2.8, 2.11, 2.12, 2.13, 2.14_
 
   - [x] 3.4 Run the suite, commit, and push increment 3
@@ -134,17 +140,19 @@ Scope discipline: no file, function, or abstraction beyond what design.md names.
     - _Requirements: 14.1, 14.2, 14.7_
 
 - [x] 4. Reference data and the seed script
-  - [x] 4.1 Create the reference data models
-    - `backend/src/models/Category.js` (unique `name`), `backend/src/models/Item.js` (unique `code`, `name`, required `category` ObjectId reference, non-unique `category` index), `backend/src/models/Location.js` (unique `code`, `name`)
+  - [x] 4.1 Create the reference data tables
+    - `backend/src/db/schema.sql` — `CREATE TABLE categories` (`name` under `uq_categories_name`), `CREATE TABLE locations` (`code` under `uq_locations_code`, plus `name`, which two locations may share), `CREATE TABLE items` (`code` under `uq_items_code`, `name`, `category_id` NOT NULL)
+    - `items` also carries the non-unique `ix_items_category` so listing one category's items is an index range scan, and `fk_items_category` ON DELETE RESTRICT ON UPDATE RESTRICT, so deleting a referenced category is refused rather than silently taking its items with it
+    - `backend/src/db/mappers.js` — `toCategory`, `toItem`, `toLocation`, `toUserRef`, which rebuild the nested response shape from the aliased columns of a JOIN row
     - _Requirements: 3.2_
 
   - [x] 4.2 Add the reference list routes
-    - `backend/src/controllers/reference.controller.js` and `backend/src/routes/reference.routes.js` — `GET /api/items` (with populated category), `GET /api/locations`, `GET /api/users` (id, email, role only)
+    - `backend/src/controllers/reference.controller.js` and `backend/src/routes/reference.routes.js` — `GET /api/items` (joining `categories` so each item carries its category), `GET /api/locations`, `GET /api/users` (id, email, role only)
     - Mount in `backend/src/routes/index.js` behind `authenticate` + `authorize`
     - _Requirements: 2.13, 3.2_
 
   - [x] 4.3 Write the non-interactive seed script
-    - `backend/scripts/seed.js` — validates `SEED_ADMIN_PASSWORD`, `SEED_OPS_PASSWORD`, `SEED_SALES_PASSWORD` and exits non-zero when any is absent; creates one Admin, one Operations_User, one Sales_User, two Locations, one Category, and two Items; idempotent by upsert on the unique keys; requires no interactive input
+    - `backend/scripts/seed.js` — validates `SEED_ADMIN_PASSWORD`, `SEED_OPS_PASSWORD`, `SEED_SALES_PASSWORD` and exits non-zero when any is absent; creates one Admin, one Operations_User, one Sales_User, two Locations, one Category, and two Items; idempotent by `INSERT ... ON DUPLICATE KEY UPDATE` on each unique business key (user email, location code, category name, item code); requires no interactive input
     - Add the `seed` script entry to `backend/package.json`
     - _Requirements: 13.5, 13.8, 14.5_
 
@@ -162,22 +170,23 @@ Scope discipline: no file, function, or abstraction beyond what design.md names.
     - _Requirements: 14.1, 14.2, 14.7_
 
 - [x] 5. Inventory core: availability, transactions, records, and ledger
-  - [x] 5.1 Create the shared field helpers and the InventoryRecord model
-    - `backend/src/models/fields.js` — `nonNegativeCount` (integer 0..999,999,999) and `validQuantity` (integer 1..1,000,000)
-    - `backend/src/models/InventoryRecord.js` — `item`, `location`, trimmed `batch` 1..32, `physicalQuantity`, `reservedQuantity`, an `availableQuantity` virtual that delegates to `availableQuantity(record)`, and no stored available field
-    - Declare the `{ item: 1, location: 1, batch: 1 }` index **once**, as the unique index only; do not add the redundant non-unique duplicate of the same key pattern shown in design.md
+  - [x] 5.1 Create the inventory_records table and its declared quantity bounds
+    - `backend/src/db/schema.sql` — `CREATE TABLE inventory_records`: `item_id`, `location_id`, `batch` VARCHAR(32), `physical_quantity` and `reserved_quantity` INT UNSIGNED so the database itself refuses a negative balance, `fk_inventory_item` and `fk_inventory_location` both ON DELETE RESTRICT, and no stored available column — availability is derived on every read
+    - `CHECK` constraints carrying the bounds the application also guards: `ck_inventory_physical_max` and `ck_inventory_reserved_max` (≤ 999,999,999) and `ck_inventory_reserved_lte_physical` (`reserved_quantity <= physical_quantity`), which is what makes a non-negative available quantity true by construction; the 1..1,000,000 request-side bound stays in `validQuantity` in `backend/src/validation/common.js`
+    - Declare the `(item_id, location_id, batch)` key pattern **once**, as `uq_inventory_item_location_batch`; add only `ix_inventory_location` beside it, which exists because `WHERE location_id = ?` cannot use the unique index, not as a duplicate of it
     - _Requirements: 3.1, 3.2, 3.3, 3.6, 3.10_
 
-  - [x] 5.2 Create the append-only InventoryTransaction model
-    - `backend/src/models/InventoryTransaction.js` — `inventoryRecord`, signed integer `physicalDelta` and `reservedDelta`, unique `movementReference`, `appliedAt`, nullable `createdBy`; indexes `{ movementReference: 1 }` unique and `{ inventoryRecord: 1, appliedAt: 1 }`; pre-hooks rejecting every update and delete operation
+  - [x] 5.2 Create the append-only inventory_transactions ledger table
+    - `backend/src/db/schema.sql` — `CREATE TABLE inventory_transactions`: `inventory_record_id`, SIGNED `physical_delta` and `reserved_delta` so an outward movement is negative, `movement_reference` VARCHAR(200) under `uq_inventory_transactions_movement_reference`, `applied_at`, nullable `created_by`; `ix_inventory_transactions_record_applied (inventory_record_id, applied_at)` for ledger reconstruction in application order, `ix_inventory_transactions_created_by`, `fk_inventory_transactions_record` ON DELETE RESTRICT and `fk_inventory_transactions_created_by` ON DELETE SET NULL
+    - Append-only is a property of the code paths rather than a column: no route, controller, or service issues an `UPDATE` or a `DELETE` against this table, and it carries no `updated_at` because nothing would ever set one
     - _Requirements: 4.4, 4.5, 4.7, 4.10_
 
   - [x] 5.3 Implement the availability module
-    - `backend/src/services/availability.js` — `availableQuantity(record)`, `locationAvailableQuantity(records)`, `hasAvailableAtLeastExpr(quantity)`; the only module in the codebase that subtracts `reservedQuantity` from `physicalQuantity`
+    - `backend/src/services/availability.js` — `availableQuantity(record)` and `locationAvailableQuantity(records)` for the read paths, `AVAILABLE_SQL` / `AVAILABLE_SQL_FOR(alias)` for a `SELECT` to project the same rule as a derived column, and `hasAvailableAtLeastSql(quantity)` plus `hasPhysicalAtLeastSql(quantity)` returning a `WHERE`-clause fragment with its bound parameter, so a conditional `UPDATE` lets MySQL decide availability as part of the write; the only module in the codebase that subtracts `reservedQuantity` from `physicalQuantity`
     - _Requirements: 3.3, 3.4, 3.5, 3.12, 15.1_
 
   - [x] 5.4 Implement the transaction helper
-    - `backend/src/db/withTransaction.js` — fresh session per attempt, `startTransaction`, commit on success, abort on any error, `endSession()` in `finally`, transient-label retry up to 3 times (4 attempts), then `CONCURRENT_MODIFICATION` 409
+    - `backend/src/db/withTransaction.js` — a fresh pooled connection per attempt so a retry re-runs the callback from its first read, `beginTransaction`, commit on success, `rollback` on any error with a rollback failure swallowed, `connection.release()` in `finally` on every exit path, retry only on `ER_LOCK_DEADLOCK` (1213) and `ER_LOCK_WAIT_TIMEOUT` (1205) up to 3 times (4 attempts), then `CONCURRENT_MODIFICATION` 409; every read and write of the callback runs on the connection it is handed, never on the pool
     - _Requirements: 8.1, 8.2, 8.3, 8.5_
 
   - [x] 5.5 Implement the movement reference builders
@@ -185,7 +194,7 @@ Scope discipline: no file, function, or abstraction beyond what design.md names.
     - _Requirements: 4.5, 4.6, 4.9_
 
   - [x] 5.6 Implement the inventory service
-    - `backend/src/services/inventory.service.js` — `applyMovement` (the one place that writes a record change and its ledger row in the caller's session, using a conditional update whose filter carries the availability/non-negativity condition and mapping `error.code === 11000` to `DUPLICATE_INVENTORY_TRANSACTION`), named guards `assertSufficientPhysical` and `assertSufficientAvailable`, `createRecord` (pre-generated `_id`, existence checks returning `INVALID_REFERENCE`, duplicate triple returning `DUPLICATE_INVENTORY_RECORD`, opening ledger row in the same transaction), `adjustRecord` (`IN`/`OUT`), `listRecords`, `getLocationAvailability` (0 when no records)
+    - `backend/src/services/inventory.service.js` — `applyMovement` (the one place that writes a record change and its ledger row on the caller's transaction connection: `SELECT ... FOR UPDATE` on the target row first, the guards decided against values read under that lock, the same predicates repeated in the `UPDATE ... WHERE` clause and checked through `affectedRows`, and the ledger `INSERT` whose `ER_DUP_ENTRY` — recognised by the exported `isDuplicateKey`, errno 1062 — becomes `DUPLICATE_INVENTORY_TRANSACTION`), named guards `assertSufficientPhysical` and `assertSufficientAvailable`, `createInventoryRecord` (id pre-generated by `newId()`, existence checks returning `INVALID_REFERENCE` rather than a raw foreign key failure, a triple refused by `uq_inventory_item_location_batch` returning `DUPLICATE_INVENTORY_RECORD`, opening ledger row in the same transaction), `adjustInventoryRecord` (`IN`/`OUT`), `listInventoryRecords`, `getLocationAvailability` (0 when no rows)
     - _Requirements: 3.7, 3.8, 3.9, 3.10, 3.11, 3.12, 4.2, 4.3, 4.4, 4.6, 4.9, 8.1, 15.5_
 
   - [x] 5.7 Add the inventory validation schemas and quantity error code selection
@@ -209,6 +218,7 @@ Scope discipline: no file, function, or abstraction beyond what design.md names.
 
   - [x]* 5.11 Write unit tests for inventory creation, adjustment, and reads
     - `backend/tests/inventory.test.js` — 100/30 → 70 example, duplicate triple 409, `INVALID_REFERENCE`, opening ledger row contents, adjustment guards, availability read of 0 when no record exists
+    - `backend/tests/schema.test.js` — asserts each database-level constraint directly, with SQL that bypasses every service: `ck_inventory_reserved_lte_physical`, the `INT UNSIGNED` floor, `uq_inventory_item_location_batch` (including `'a'` and `'A'` staying distinct under the case-sensitive collation), the movement-reference unique index, and a record referencing an absent item
     - _Requirements: 3.4, 3.7, 3.11, 3.12, 4.2, 4.3, 4.9_
 
   - [x] 5.12 Write mandatory test 5 against a real restricted write route
@@ -250,8 +260,9 @@ Scope discipline: no file, function, or abstraction beyond what design.md names.
     - _Requirements: 14.1, 14.2, 14.7_
 
 - [x] 6. Work orders and derived shortage
-  - [x] 6.1 Create the WorkOrder model
-    - `backend/src/models/WorkOrder.js` — `location`, `item`, `requiredQuantity` (`validQuantity`), `assignedUser`, `status` enum defaulting to `Assigned`, nullable `statusChangedAt`, `createdBy`, indexes `{ item, location }` and `{ status }`, and no stored shortage field
+  - [x] 6.1 Create the work_orders table
+    - `backend/src/db/schema.sql` — `CREATE TABLE work_orders`: `location_id`, `item_id`, `required_quantity` INT UNSIGNED under `ck_work_orders_required_quantity` (`BETWEEN 1 AND 1000000`), `assigned_user_id`, `status` ENUM(`'Assigned'`, `'InProgress'`, `'Completed'`) defaulting to `'Assigned'`, nullable `status_changed_at`, nullable `created_by`, and no stored shortage column, since shortage is derived at read time and so can never go stale
+    - Indexes `ix_work_orders_item_location`, `ix_work_orders_status`, `ix_work_orders_assigned_user`, `ix_work_orders_created_by`; foreign keys to `locations`, `items` and `users` ON DELETE RESTRICT, with `fk_work_orders_created_by` ON DELETE SET NULL
     - _Requirements: 5.1, 5.4_
 
   - [x] 6.2 Implement the work order service
@@ -289,12 +300,13 @@ Scope discipline: no file, function, or abstraction beyond what design.md names.
     - _Requirements: 14.1, 14.2, 14.7_
 
 - [x] 7. Internal stock transfers
-  - [x] 7.1 Create the InternalTransfer model
-    - `backend/src/models/InternalTransfer.js` — `item`, trimmed `batch`, `sourceLocation`, `destinationLocation`, `quantity` (`validQuantity`), `receivedQuantity` bounded by `quantity`, `status` enum defaulting to `Requested`, nullable `dispatchedAt` and `receivedAt`, indexes `{ status }` and `{ item, sourceLocation, batch }`
+  - [x] 7.1 Create the internal_transfers table
+    - `backend/src/db/schema.sql` — `CREATE TABLE internal_transfers`: `item_id`, `batch`, `source_location_id`, `destination_location_id`, `quantity` under `ck_internal_transfers_quantity` (`BETWEEN 1 AND 1000000`), `received_quantity` defaulting to 0 and kept as its own column rather than derived from `status` so a later partial receipt needs no schema change, `status` ENUM(`'Requested'`, `'Dispatched'`, `'Received'`) defaulting to `'Requested'`, nullable `dispatched_at` and `received_at`
+    - `ck_internal_transfers_received_lte_quantity` so a receipt can never book in more than was sent, and `ck_internal_transfers_distinct_locations` so no code path can create a same-location transfer; indexes `ix_internal_transfers_status`, `ix_internal_transfers_item_source_batch`, `ix_internal_transfers_destination`, `ix_internal_transfers_created_by`, plus the foreign keys to `items`, `locations` (twice) and `users`
     - _Requirements: 6.1, 15.2_
 
   - [x] 7.2 Implement the transfer service
-    - `backend/src/services/transfer.service.js` — named guards `assertDifferentLocations` (`SAME_LOCATION_TRANSFER`) and `assertTransferTransition` (`INVALID_STATUS_TRANSITION`); `createTransfer` with existence checks including the source Inventory_Record (`INVALID_REFERENCE`) and no inventory write; `dispatchTransfer` inside `withTransaction` calling `applyMovement` with `-quantity` at the source and `transferMovementReference(id, 'DISPATCH')`; `receiveTransfer` inside `withTransaction` increasing or creating the destination record, setting `receivedQuantity` and `receivedAt`, using `transferMovementReference(id, 'RECEIPT')` and mapping the duplicate-key signal to `TRANSFER_ALREADY_RECEIVED`; `NOT_FOUND` on unmatched ids
+    - `backend/src/services/transfer.service.js` — named guards `assertDifferentLocations` (`SAME_LOCATION_TRANSFER`) and `assertTransferTransition` (`INVALID_STATUS_TRANSITION`); `createTransfer` with existence checks including the source Inventory_Record (`INVALID_REFERENCE`) and no inventory write; `dispatchTransfer` inside `withTransaction`, locking the transfer row with `SELECT ... FOR UPDATE` and calling `applyMovement` with `-quantity` at the source under `transferMovementReference(id, 'DISPATCH')`; `receiveTransfer` inside `withTransaction` increasing or creating the destination record, setting `received_quantity` and `received_at`, using `transferMovementReference(id, 'RECEIPT')` and mapping the `ER_DUP_ENTRY` on that unique movement reference to `TRANSFER_ALREADY_RECEIVED`; `NOT_FOUND` on unmatched ids
     - _Requirements: 6.1, 6.2, 6.3, 6.4, 6.5, 6.6, 6.7, 6.8, 6.9, 6.10, 6.14, 6.15, 15.2, 15.5_
 
   - [x] 7.3 Add the transfer validation schemas
@@ -336,12 +348,14 @@ Scope discipline: no file, function, or abstraction beyond what design.md names.
     - _Requirements: 14.1, 14.2, 14.7_
 
 - [x] 8. Customer orders and stock reservation
-  - [x] 8.1 Create the CustomerOrder model
-    - `backend/src/models/CustomerOrder.js` — embedded `reservationEntrySchema` (`item`, `location`, `batch`, `quantity`, `_id: false`), `customerName` 1..120 trimmed, `item`, `location`, `quantity`, `status` enum defaulting to `Reserved`, `reservations` validated to hold 1..20 entries, `createdBy`, indexes `{ item, location }` and `{ status }`
+  - [x] 8.1 Create the customer_orders table and its reservation child table
+    - `backend/src/db/schema.sql` — `CREATE TABLE customer_orders`: `customer_name` VARCHAR(120), `item_id`, `location_id`, `quantity` under `ck_customer_orders_quantity`, `status` ENUM(`'Reserved'`, `'Cancelled'`) defaulting to `'Reserved'`, nullable `created_by`, indexes `ix_customer_orders_item_location`, `ix_customer_orders_status`, `ix_customer_orders_created_by`
+    - `CREATE TABLE customer_order_reservations` — the reservation lines as a child table with one row per batch drawn from (`customer_order_id`, `item_id`, `location_id`, `batch`, `quantity` under `ck_reservation_quantity`), `uq_reservation_order_batch` because an order draws from any batch exactly once in its single ascending pass, `ix_reservation_item_location_batch`, and `fk_reservation_order` ON DELETE CASCADE — the one cascade in the schema, since a line has no meaning without its order
+    - `backend/src/db/mappers.js` — `toCustomerOrder(row, reservationRows)` and `toReservation`, which rebuild the order response with its lines nested, so the documented response shape is unchanged by the lines living in their own table
     - _Requirements: 7.1, 7.11, 15.3_
 
   - [x] 8.2 Implement the order service
-    - `backend/src/services/order.service.js` — `createOrder` inside `withTransaction` with existence checks (`INVALID_REFERENCE`), and `reserveAcrossBatches` scanning records for the item and location sorted `{ batch: 1 }`, taking `min(remaining, availableQuantity(record))`, applying each increment through `updateOne` whose filter carries `hasAvailableAtLeastExpr(take)`, deciding on `matchedCount === 1`, writing one ledger row per changed record with `reserveMovementReference(orderId, recordId)`, and throwing `INSUFFICIENT_AVAILABLE_QUANTITY` when a filter misses or `remaining > 0` at the end; `getOrder`/`listOrders` with `NOT_FOUND`
+    - `backend/src/services/order.service.js` — `createOrder` inside `withTransaction` with existence checks (`INVALID_REFERENCE`), and `reserveAcrossBatches` selecting the records for the item and location with `ORDER BY batch ... FOR UPDATE` so a competing reservation blocks rather than reading a value about to go stale, taking `min(remaining, availableQuantity(record))`, applying each increment through a conditional `UPDATE inventory_records SET reserved_quantity = reserved_quantity + ? WHERE id = ? AND (physical_quantity - reserved_quantity) >= ?` whose predicate comes from `hasAvailableAtLeastSql(take)`, deciding on `affectedRows === 1` and never on the prior read, writing one ledger row per changed record with `reserveMovementReference(orderId, recordId)`, inserting one `customer_order_reservations` row per line, and throwing `INSUFFICIENT_AVAILABLE_QUANTITY` when the predicate matches nothing or `remaining > 0` at the end; `getOrder`/`listOrders` with `NOT_FOUND`, loading every order's lines in one query rather than one per order
     - _Requirements: 7.1, 7.2, 7.3, 7.4, 7.10, 7.12, 15.3, 15.5, 15.6_
 
   - [x] 8.3 Add the order validation schemas
@@ -353,7 +367,7 @@ Scope discipline: no file, function, or abstraction beyond what design.md names.
     - _Requirements: 2.6, 2.7, 7.1_
 
   - [x] 8.5 Write mandatory test 1: reservation above availability
-    - `backend/tests/orders.test.js` — a creation request for a quantity above the location availability returns 409 `INSUFFICIENT_AVAILABLE_QUANTITY`, no Customer_Order document exists for it, and the reserved quantity of every affected record equals the value read immediately before; issued over HTTP
+    - `backend/tests/orders.test.js` — a creation request for a quantity above the location availability returns 409 `INSUFFICIENT_AVAILABLE_QUANTITY`, no Customer_Order row and no reservation line exists for it, and the reserved quantity of every affected record equals the value read immediately before; issued over HTTP
     - _Requirements: 7.3, 12.1, 12.13_
 
   - [x]* 8.6 Write unit tests for reservation allocation
@@ -371,17 +385,17 @@ Scope discipline: no file, function, or abstraction beyond what design.md names.
     - _Requirements: 14.1, 14.2, 14.7_
 
 - [x] 9. Concurrency and transaction hardening
-  - [x] 9.1 Harden retry and session hygiene
-    - Review `backend/src/db/withTransaction.js` against the retry rule: fresh session per attempt so a retry re-runs from the first read, swallowed abort errors, `endSession()` on every exit path, `CONCURRENT_MODIFICATION` after the fourth attempt
-    - Add `backend/tests/setup/sessionCount.js` — reads the server's open session count so tests can compare before and after a request
+  - [x] 9.1 Harden retry and connection hygiene
+    - Review `backend/src/db/withTransaction.js` against the retry rule: a fresh pooled connection per attempt so a retry re-runs from the first read, swallowed rollback errors, `connection.release()` on every exit path, only `ER_LOCK_DEADLOCK` and `ER_LOCK_WAIT_TIMEOUT` treated as transient, `CONCURRENT_MODIFICATION` after the fourth attempt
+    - Add `backend/tests/setup/poolCount.js` — `getInUseConnectionCount` and `getOpenConnectionCount` over the pool's own lists, so a test can compare in-use pooled connections before and after a request; a connection that is never released stays checked out and the pool blocks once `connectionLimit` of them accumulate
     - _Requirements: 8.2, 8.3, 8.5_
 
   - [x] 9.2 Write the concurrency tests
-    - `backend/tests/concurrency.test.js` — availability 100 with unawaited orders of 80 and 50 via `Promise.allSettled`: exactly one 201, one 409 `INSUFFICIENT_AVAILABLE_QUANTITY`, exactly one order document, reserved up by exactly the committed quantity; plus two unawaited receipts for one transfer: exactly one commit, the other 409 `TRANSFER_ALREADY_RECEIVED`
+    - `backend/tests/concurrency.test.js` — availability 100 with unawaited orders of 80 and 50 via `Promise.allSettled`: exactly one 201, one 409 `INSUFFICIENT_AVAILABLE_QUANTITY`, exactly one order row, reserved up by exactly the committed quantity; plus two unawaited receipts for one transfer: exactly one commit, the other 409 `TRANSFER_ALREADY_RECEIVED`
     - _Requirements: 6.16, 7.5, 7.6, 7.7, 12.6, 12.13_
 
   - [x]* 9.3 Write unit tests for transaction behaviour
-    - `backend/tests/transactions.test.js` — rollback totality on an injected mid-transaction failure, open session count returning to baseline, retry count and `CONCURRENT_MODIFICATION` at exhaustion, and a graceful shutdown smoke test
+    - `backend/tests/transactions.test.js` — rollback totality on an injected mid-transaction failure, the in-use pooled connection count returning to baseline, retry count and `CONCURRENT_MODIFICATION` at exhaustion, and a graceful shutdown smoke test
     - _Requirements: 8.2, 8.3, 8.4, 8.5, 8.8_
 
   - [x]* 9.4 Write property test for concurrent reservation safety
@@ -393,9 +407,9 @@ Scope discipline: no file, function, or abstraction beyond what design.md names.
     - **Property 14: Reservation outcome is order-independent**
     - **Validates: Requirements 7.8**
 
-  - [x]* 9.6 Write property test for session and retry bounds
+  - [x]* 9.6 Write property test for connection and retry bounds
     - `backend/tests/properties/api.pbt.test.js`
-    - **Property 17: Sessions and retries are bounded**
+    - **Property 17: Connections and retries are bounded**
     - **Validates: Requirements 8.3, 8.5**
 
   - [x]* 9.7 Write property test for the rejected-request contract
@@ -472,11 +486,11 @@ Scope discipline: no file, function, or abstraction beyond what design.md names.
 
 - [x] 11. Documentation set
   - [x] 11.1 Write the README
-    - `README.md` — tech stack, minimum Node.js and MongoDB versions, numbered setup steps, database setup including the `rs.initiate()` replica-set step, the full environment variable table with purpose/required/range/non-credential example, the verbatim commands to run the API server, the web client, the seed script, and the test suite, the seeded user emails with their roles and the environment variable supplying each password, the replica-set reason and the 3-retry limit, and links to the other documents
+    - `README.md` — tech stack, minimum Node.js and MySQL versions (8.0.16, the floor for enforced `CHECK` constraints), numbered setup steps, database setup ending in `npm run migrate`, a note that no clustering or special deployment shape is needed because InnoDB is transactional on an ordinary standalone server, the full environment variable table with purpose/required/range/non-credential example, the verbatim commands to run the API server, the web client, the seed script, and the test suite, the seeded user emails with their roles and the environment variable supplying each password, the InnoDB requirement and the 3-retry limit, and links to the other documents
     - _Requirements: 8.6, 10.7, 13.1, 13.5, 13.7, 13.8_
 
   - [x] 11.2 Write the database schema document with the ER diagram source
-    - `docs/database-schema.md` — every collection with each field, its type, and whether it is required or optional, every reference field with its target collection, and every unique index
+    - `docs/database-schema.md` — every table with each column, its type, and whether it is nullable, every foreign key with the table and column it references and its referential actions, every unique index, and every `CHECK` constraint
     - `docs/er-diagram.mmd` — the tracked Mermaid ER diagram source, embedded by reference in the schema document
     - _Requirements: 13.2_
 
@@ -484,9 +498,9 @@ Scope discipline: no file, function, or abstraction beyond what design.md names.
     - `docs/api.md` — for every route: method, path, permitted role set, request schema, success response schema with status, every error code with its HTTP status, and one example request body and success response; plus the complete error code list and the exact required environment variable list
     - _Requirements: 13.3, 13.9_
 
-  - [x] 11.4 Write the deviation and extensibility documents
-    - `docs/mongodb-deviation.md` — MongoDB replacing the relational database of the brief, how ObjectId references and multi-document transactions preserve its intent, and the accepted trade-offs (application-enforced referential integrity, replica-set requirement)
-    - `docs/extensibility.md` — for each of adding a damaged quantity, partial transfer receipt, cancelling an order and releasing its reservation, and restricting a user to their assigned location: the module, the named function, and the schema fields to edit
+  - [x] 11.4 Write the data-integrity and extensibility documents
+    - `docs/data-integrity.md` — which inventory invariants the database enforces and through which constraint, how `withTransaction` acquires and releases its connection and which errors it retries, how the unique `movement_reference` makes a replayed movement impossible to apply twice, and how the row lock plus the availability predicate in the `WHERE` clause make concurrent reservations safe
+    - `docs/extensibility.md` — for each of adding a damaged quantity, partial transfer receipt, cancelling an order and releasing its reservation, and restricting a user to their assigned location: the module, the named function, and the schema columns to edit
     - _Requirements: 13.4, 15.7_
 
   - [x]* 11.5 Write a documentation consistency test
@@ -505,8 +519,8 @@ Scope discipline: no file, function, or abstraction beyond what design.md names.
 - Every increment's final sub-task runs the suite before committing, so no pushed commit leaves the tests failing (Req 14.7).
 - Property tests use fast-check with at least 25 runs and report the failing seed, so a counterexample is reproducible (Req 12.7).
 - Properties 15, 16, and 17 are written in task 9 rather than earlier because each ranges over the complete route table, which only exists once tasks 5 through 8 have landed. Property 18 is written in task 1 with the config loader.
-- Mandatory test 5 lands in task 5.12 rather than task 3, because the assertion that a targeted document is unchanged needs a real restricted write route, and `POST /api/inventory/:id/adjust` is the first one to exist. Task 3.3 covers the role matrix and the permission map completeness check.
-- `InventoryRecord` declares the `{ item, location, batch }` key pattern once, as the unique index. The duplicate non-unique declaration shown in design.md is deliberately omitted (task 5.1).
+- Mandatory test 5 lands in task 5.12 rather than task 3, because the assertion that a targeted row is unchanged needs a real restricted write route, and `POST /api/inventory/:id/adjust` is the first one to exist. Task 3.3 covers the role matrix and the permission map completeness check.
+- `inventory_records` declares the `(item_id, location_id, batch)` key pattern once, as `uq_inventory_item_location_batch`; the only other index on the table is `ix_inventory_location`, which exists because a `WHERE location_id = ?` read cannot use the unique index rather than as a duplicate of it (task 5.1).
 
 ## Task Dependency Graph
 
