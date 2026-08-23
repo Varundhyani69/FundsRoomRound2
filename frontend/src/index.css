@@ -1,0 +1,20 @@
+/* frontend/src/index.css -- Tailwind entry point, imported once in main.jsx.
+   No custom CSS beyond the three Tailwind layers: every visual style in the app is a
+   utility class on the element itself, so there is exactly one place a stylesheet is
+   declared and no separate design-system file to keep in sync with the components. */
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* A small set of base defaults so a bare <table>, <input>, <button> etc. that a screen
+   renders without every utility spelled out still looks intentional, not unstyled. */
+@layer base {
+  html {
+    @apply bg-slate-50 text-slate-900;
+  }
+
+  body {
+    @apply min-h-screen antialiased;
+  }
+}

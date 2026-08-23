@@ -25,6 +25,7 @@ import { canWrite } from '../auth/permissions.js';
 import DataTable from '../components/DataTable.jsx';
 import ErrorBanner from '../components/ErrorBanner.jsx';
 import EmptyState from '../components/EmptyState.jsx';
+import StatusBadge from '../components/StatusBadge.jsx';
 
 const COLUMNS = [
     { key: 'id', label: 'ID' },
@@ -55,7 +56,11 @@ function toRow(transfer) {
         itemLabel: `${transfer.item.code} - ${transfer.item.name}`,
         batch: transfer.batch,
         quantity: transfer.quantity,
-        status: transfer.status,
+        // Kept as the raw enum string here (not a badge element) so the
+        // dispatch/receive gating below (`row.rawStatus === 'Requested'`)
+        // stays a plain string comparison; the badge is rendered only at
+        // display time via `status` in the mapping below.
+        rawStatus: transfer.status,
     };
 }
 
@@ -177,81 +182,102 @@ export default function TransfersScreen() {
     const showActionsColumn = canDispatch || canReceive;
     const columns = showActionsColumn ? [...COLUMNS, { key: 'actions', label: 'Actions' }] : COLUMNS;
 
-    const displayRows = showActionsColumn
-        ? rows.map((row) => ({
-            ...row,
-            // Dispatch appears only on `Requested` rows, receive only on
-            // `Dispatched` rows, and neither on `Received` rows -- so a
-            // row in the terminal status renders no button.
-            actions: (
-                <>
-                    {canDispatch && row.status === 'Requested' && (
-                        <button
-                            type="button"
-                            disabled={busyAction?.id === row.id && busyAction.action === 'dispatch'}
-                            onClick={() => handleDispatch(row.id)}
-                        >
-                            Dispatch
-                        </button>
-                    )}
-                    {canReceive && row.status === 'Dispatched' && (
-                        <button
-                            type="button"
-                            disabled={busyAction?.id === row.id && busyAction.action === 'receive'}
-                            onClick={() => handleReceive(row.id)}
-                        >
-                            Receive
-                        </button>
-                    )}
-                </>
-            ),
-        }))
-        : rows;
+    const displayRows = rows.map((row) => {
+        const displayRow = { ...row, status: <StatusBadge status={row.rawStatus} /> };
+        if (!showActionsColumn) {
+            return displayRow;
+        }
+        // Dispatch appears only on `Requested` rows, receive only on
+        // `Dispatched` rows, and neither on `Received` rows -- so a
+        // row in the terminal status renders no button.
+        displayRow.actions = (
+            <div className="flex gap-2">
+                {canDispatch && row.rawStatus === 'Requested' && (
+                    <button
+                        type="button"
+                        disabled={busyAction?.id === row.id && busyAction.action === 'dispatch'}
+                        onClick={() => handleDispatch(row.id)}
+                        className="rounded-md border border-slate-300 px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-60"
+                    >
+                        Dispatch
+                    </button>
+                )}
+                {canReceive && row.rawStatus === 'Dispatched' && (
+                    <button
+                        type="button"
+                        disabled={busyAction?.id === row.id && busyAction.action === 'receive'}
+                        onClick={() => handleReceive(row.id)}
+                        className="rounded-md border border-slate-300 px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-60"
+                    >
+                        Receive
+                    </button>
+                )}
+            </div>
+        );
+        return displayRow;
+    });
+
+    const inputClass =
+        'block w-full rounded-md border border-slate-300 px-3 py-2 text-sm text-slate-900 shadow-sm focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500';
+    const labelClass = 'block text-sm font-medium text-slate-700';
 
     return (
         <main>
-            <h1>Internal Transfers</h1>
+            <h1 className="mb-4 text-2xl font-semibold text-slate-900">Internal Transfers</h1>
             <ErrorBanner message={error} />
 
             {canCreate && (
-                <form onSubmit={handleCreate}>
-                    <label>
-                        Item
-                        <input value={form.item} onChange={handleFieldChange('item')} required />
-                    </label>
-                    <label>
-                        Batch
-                        <input value={form.batch} onChange={handleFieldChange('batch')} required />
-                    </label>
-                    <label>
-                        Source Location
-                        <input value={form.sourceLocation} onChange={handleFieldChange('sourceLocation')} required />
-                    </label>
-                    <label>
-                        Destination Location
-                        <input
-                            value={form.destinationLocation}
-                            onChange={handleFieldChange('destinationLocation')}
-                            required
-                        />
-                    </label>
-                    <label>
-                        Quantity
-                        <input
-                            type="number"
-                            value={form.quantity}
-                            onChange={handleFieldChange('quantity')}
-                            required
-                        />
-                    </label>
-                    <button type="submit" disabled={creating}>
+                <form onSubmit={handleCreate} className="mb-6 rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
+                    <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+                        <label className={labelClass}>
+                            Item
+                            <input value={form.item} onChange={handleFieldChange('item')} required className={`mt-1 ${inputClass}`} />
+                        </label>
+                        <label className={labelClass}>
+                            Batch
+                            <input value={form.batch} onChange={handleFieldChange('batch')} required className={`mt-1 ${inputClass}`} />
+                        </label>
+                        <label className={labelClass}>
+                            Source Location
+                            <input
+                                value={form.sourceLocation}
+                                onChange={handleFieldChange('sourceLocation')}
+                                required
+                                className={`mt-1 ${inputClass}`}
+                            />
+                        </label>
+                        <label className={labelClass}>
+                            Destination Location
+                            <input
+                                value={form.destinationLocation}
+                                onChange={handleFieldChange('destinationLocation')}
+                                required
+                                className={`mt-1 ${inputClass}`}
+                            />
+                        </label>
+                        <label className={labelClass}>
+                            Quantity
+                            <input
+                                type="number"
+                                value={form.quantity}
+                                onChange={handleFieldChange('quantity')}
+                                required
+                                className={`mt-1 ${inputClass}`}
+                            />
+                        </label>
+                    </div>
+                    <button
+                        type="submit"
+                        disabled={creating}
+                        className="mt-4 rounded-md bg-brand-600 px-4 py-2 text-sm font-medium text-white shadow-sm hover:bg-brand-700 disabled:cursor-not-allowed disabled:opacity-60"
+                    >
                         Create Transfer
                     </button>
                 </form>
             )}
 
             {loading ? (
-                <p>Loading…</p>
+                <p className="text-sm text-slate-500">Loading…</p>
             ) : rows.length === 0 ? (
                 <EmptyState message="No internal transfers found" />
             ) : (

@@ -19,17 +19,21 @@ import CustomerOrdersScreen from './screens/CustomerOrdersScreen.jsx';
 export default function App() {
     return (
         <AuthProvider>
-            <Nav />
-            <Routes>
-                <Route path="/login" element={<LoginScreen />} />
-                <Route element={<RequireAuth />}>
-                    <Route path="/inventory" element={<InventoryScreen />} />
-                    <Route path="/work-orders" element={<WorkOrdersScreen />} />
-                    <Route path="/transfers" element={<TransfersScreen />} />
-                    <Route path="/orders" element={<CustomerOrdersScreen />} />
-                </Route>
-                <Route path="*" element={<Navigate to="/inventory" replace />} />
-            </Routes>
+            <div className="min-h-screen bg-slate-50">
+                <Nav />
+                <div className="mx-auto max-w-6xl px-4 py-6 sm:px-6 lg:px-8">
+                    <Routes>
+                        <Route path="/login" element={<LoginScreen />} />
+                        <Route element={<RequireAuth />}>
+                            <Route path="/inventory" element={<InventoryScreen />} />
+                            <Route path="/work-orders" element={<WorkOrdersScreen />} />
+                            <Route path="/transfers" element={<TransfersScreen />} />
+                            <Route path="/orders" element={<CustomerOrdersScreen />} />
+                        </Route>
+                        <Route path="*" element={<Navigate to="/inventory" replace />} />
+                    </Routes>
+                </div>
+            </div>
         </AuthProvider>
     );
 }

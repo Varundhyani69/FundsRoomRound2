@@ -82,10 +82,10 @@ export default function InventoryScreen() {
 
     return (
         <main>
-            <h1>Inventory</h1>
+            <h1 className="mb-4 text-2xl font-semibold text-slate-900">Inventory</h1>
             <ErrorBanner message={error} />
             {loading ? (
-                <p>Loading…</p>
+                <p className="text-sm text-slate-500">Loading…</p>
             ) : rows.length === 0 ? (
                 <EmptyState message="No inventory records found" />
             ) : (

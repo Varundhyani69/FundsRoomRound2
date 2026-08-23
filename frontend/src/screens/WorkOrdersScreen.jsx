@@ -33,6 +33,7 @@ import { canWrite } from '../auth/permissions.js';
 import DataTable from '../components/DataTable.jsx';
 import ErrorBanner from '../components/ErrorBanner.jsx';
 import EmptyState from '../components/EmptyState.jsx';
+import StatusBadge from '../components/StatusBadge.jsx';
 
 const BASE_COLUMNS = [
     { key: 'id', label: 'ID' },
@@ -64,7 +65,7 @@ function toRow(order) {
         itemLabel: `${order.item.code} - ${order.item.name}`,
         requiredQuantity: order.requiredQuantity,
         assignedUserLabel: order.assignedUser.email,
-        status: order.status,
+        status: <StatusBadge status={order.status} />,
         shortageQuantity: order.shortageQuantity,
     };
 }
@@ -155,7 +156,12 @@ export default function WorkOrdersScreen() {
         }
         const busy = statusBusyId === order.id;
         return (
-            <button type="button" disabled={busy} onClick={() => handleAdvanceStatus(order.id, nextStatus)}>
+            <button
+                type="button"
+                disabled={busy}
+                onClick={() => handleAdvanceStatus(order.id, nextStatus)}
+                className="rounded-md border border-slate-300 px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-60"
+            >
                 {busy ? 'Updating…' : `Advance to ${nextStatus}`}
             </button>
         );
@@ -172,61 +178,85 @@ export default function WorkOrdersScreen() {
 
     return (
         <main>
-            <h1>Work Orders</h1>
+            <h1 className="mb-4 text-2xl font-semibold text-slate-900">Work Orders</h1>
             <ErrorBanner message={error} />
 
             {canCreate && (
-                <form onSubmit={handleCreate}>
-                    <h2>Create Work Order</h2>
-                    <div>
-                        <label htmlFor="work-order-location">Location ID</label>
-                        <input
-                            id="work-order-location"
-                            type="text"
-                            value={formLocation}
-                            onChange={(event) => setFormLocation(event.target.value)}
-                            required
-                        />
+                <form onSubmit={handleCreate} className="mb-6 rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
+                    <h2 className="mb-4 text-base font-semibold text-slate-900">Create Work Order</h2>
+                    <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                        <div>
+                            <label htmlFor="work-order-location" className="mb-1 block text-sm font-medium text-slate-700">
+                                Location ID
+                            </label>
+                            <input
+                                id="work-order-location"
+                                type="text"
+                                value={formLocation}
+                                onChange={(event) => setFormLocation(event.target.value)}
+                                required
+                                className="block w-full rounded-md border border-slate-300 px-3 py-2 text-sm text-slate-900 shadow-sm focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
+                            />
+                        </div>
+                        <div>
+                            <label htmlFor="work-order-item" className="mb-1 block text-sm font-medium text-slate-700">
+                                Item ID
+                            </label>
+                            <input
+                                id="work-order-item"
+                                type="text"
+                                value={formItem}
+                                onChange={(event) => setFormItem(event.target.value)}
+                                required
+                                className="block w-full rounded-md border border-slate-300 px-3 py-2 text-sm text-slate-900 shadow-sm focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
+                            />
+                        </div>
+                        <div>
+                            <label
+                                htmlFor="work-order-required-quantity"
+                                className="mb-1 block text-sm font-medium text-slate-700"
+                            >
+                                Required Quantity
+                            </label>
+                            <input
+                                id="work-order-required-quantity"
+                                type="number"
+                                min="1"
+                                value={formRequiredQuantity}
+                                onChange={(event) => setFormRequiredQuantity(event.target.value)}
+                                required
+                                className="block w-full rounded-md border border-slate-300 px-3 py-2 text-sm text-slate-900 shadow-sm focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
+                            />
+                        </div>
+                        <div>
+                            <label
+                                htmlFor="work-order-assigned-user"
+                                className="mb-1 block text-sm font-medium text-slate-700"
+                            >
+                                Assigned User ID
+                            </label>
+                            <input
+                                id="work-order-assigned-user"
+                                type="text"
+                                value={formAssignedUser}
+                                onChange={(event) => setFormAssignedUser(event.target.value)}
+                                required
+                                className="block w-full rounded-md border border-slate-300 px-3 py-2 text-sm text-slate-900 shadow-sm focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
+                            />
+                        </div>
                     </div>
-                    <div>
-                        <label htmlFor="work-order-item">Item ID</label>
-                        <input
-                            id="work-order-item"
-                            type="text"
-                            value={formItem}
-                            onChange={(event) => setFormItem(event.target.value)}
-                            required
-                        />
-                    </div>
-                    <div>
-                        <label htmlFor="work-order-required-quantity">Required Quantity</label>
-                        <input
-                            id="work-order-required-quantity"
-                            type="number"
-                            min="1"
-                            value={formRequiredQuantity}
-                            onChange={(event) => setFormRequiredQuantity(event.target.value)}
-                            required
-                        />
-                    </div>
-                    <div>
-                        <label htmlFor="work-order-assigned-user">Assigned User ID</label>
-                        <input
-                            id="work-order-assigned-user"
-                            type="text"
-                            value={formAssignedUser}
-                            onChange={(event) => setFormAssignedUser(event.target.value)}
-                            required
-                        />
-                    </div>
-                    <button type="submit" disabled={creating}>
+                    <button
+                        type="submit"
+                        disabled={creating}
+                        className="mt-4 rounded-md bg-brand-600 px-4 py-2 text-sm font-medium text-white shadow-sm hover:bg-brand-700 disabled:cursor-not-allowed disabled:opacity-60"
+                    >
                         {creating ? 'Creating…' : 'Create Work Order'}
                     </button>
                 </form>
             )}
 
             {loading ? (
-                <p>Loading…</p>
+                <p className="text-sm text-slate-500">Loading…</p>
             ) : rows.length === 0 ? (
                 <EmptyState message="No work orders found" />
             ) : (
