@@ -7,9 +7,8 @@
 // authorization.test.js and src/permissions.js; the one check at the bottom of this
 // file only confirms POST /api/inventory is actually wired into that map.
 
-const InventoryRecord = require('../src/models/InventoryRecord');
-const InventoryTransaction = require('../src/models/InventoryTransaction');
 const { openingMovementReference } = require('../src/services/movementReference');
+const { InventoryRecord, InventoryTransaction } = require('./setup/tables');
 const { agent } = require('./setup/agent');
 const {
     FIXTURE_ITEMS,

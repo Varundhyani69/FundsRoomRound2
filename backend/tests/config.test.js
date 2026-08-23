@@ -17,7 +17,11 @@ const CONFIG_MODULE = path.join('src', 'config', 'index.js');
 
 // A minimal environment every required variable satisfies.
 const VALID_ENV = Object.freeze({
-    MONGODB_URI: 'mongodb://127.0.0.1:27017/mini_operations_erp',
+    MYSQL_HOST: '127.0.0.1',
+    MYSQL_PORT: '3306',
+    MYSQL_USER: 'erp_test',
+    MYSQL_PASSWORD: 'not-a-real-password',
+    MYSQL_DATABASE: 'mini_operations_erp',
     JWT_SECRET: 'a'.repeat(32),
     PORT: '4000',
     CORS_ORIGIN: 'http://localhost:5173',
@@ -83,18 +87,37 @@ function listSourceFiles(dir) {
 }
 
 describe('config loader: the exported module', () => {
-    test('exposes exactly the four resolved values as enumerable keys', () => {
+    test('exposes exactly the resolved values as enumerable keys', () => {
         expect(Object.keys(config).sort()).toEqual([
             'corsOrigin',
             'jwtSecret',
-            'mongoUri',
+            'mysql',
             'port',
         ]);
         expect(typeof config.port).toBe('number');
+        // The MySQL settings are grouped so a caller passes `config.mysql` straight to
+        // mysql2's createPool without restating field names.
+        expect(Object.keys(config.mysql).sort()).toEqual([
+            'database',
+            'host',
+            'password',
+            'port',
+            'user',
+        ]);
+        expect(typeof config.mysql.port).toBe('number');
     });
 
-    test('declares exactly the four required variable names', () => {
-        expect(REQUIRED).toEqual(['MONGODB_URI', 'JWT_SECRET', 'PORT', 'CORS_ORIGIN']);
+    test('declares exactly the required variable names', () => {
+        expect(REQUIRED).toEqual([
+            'MYSQL_HOST',
+            'MYSQL_PORT',
+            'MYSQL_USER',
+            'MYSQL_DATABASE',
+            'JWT_SECRET',
+            'PORT',
+            'CORS_ORIGIN',
+            'MYSQL_PASSWORD',
+        ]);
         expect(Object.isFrozen(REQUIRED)).toBe(true);
     });
 
@@ -104,7 +127,13 @@ describe('config loader: the exported module', () => {
         expect(result).toEqual({
             ok: true,
             config: {
-                mongoUri: VALID_ENV.MONGODB_URI,
+                mysql: {
+                    host: VALID_ENV.MYSQL_HOST,
+                    port: Number(VALID_ENV.MYSQL_PORT),
+                    user: VALID_ENV.MYSQL_USER,
+                    password: VALID_ENV.MYSQL_PASSWORD,
+                    database: VALID_ENV.MYSQL_DATABASE,
+                },
                 jwtSecret: VALID_ENV.JWT_SECRET,
                 port: 4000,
                 corsOrigin: VALID_ENV.CORS_ORIGIN,
@@ -138,13 +167,13 @@ describe('config loader: missing and blank required variables (Req 10.2, 10.3)',
 
     test('names every blank variable in one message, in declaration order', () => {
         const result = loadConfig(
-            envWith({ MONGODB_URI: '   ', PORT: '', CORS_ORIGIN: undefined })
+            envWith({ MYSQL_HOST: '   ', PORT: '', CORS_ORIGIN: undefined })
         );
 
         expect(result.ok).toBe(false);
         expect(result.errors).toHaveLength(1);
         expect(result.errors[0]).toBe(
-            'Missing required environment variables: MONGODB_URI, PORT, CORS_ORIGIN'
+            'Missing required environment variables: MYSQL_HOST, PORT, CORS_ORIGIN'
         );
     });
 
@@ -159,12 +188,12 @@ describe('config loader: missing and blank required variables (Req 10.2, 10.3)',
 
     test('reports missing variables first and alone, format errors suppressed', () => {
         const result = loadConfig(
-            envWith({ MONGODB_URI: undefined, PORT: '99999', JWT_SECRET: 'short' })
+            envWith({ MYSQL_HOST: undefined, PORT: '99999', JWT_SECRET: 'short' })
         );
 
         expect(result.ok).toBe(false);
         expect(result.errors).toEqual([
-            'Missing required environment variables: MONGODB_URI',
+            'Missing required environment variables: MYSQL_HOST',
         ]);
     });
 });
@@ -244,7 +273,13 @@ describe('config loader: startup wrapper', () => {
         const resolved = loadOrExit(VALID_ENV);
 
         expect(resolved).toEqual({
-            mongoUri: VALID_ENV.MONGODB_URI,
+            mysql: {
+                host: VALID_ENV.MYSQL_HOST,
+                port: Number(VALID_ENV.MYSQL_PORT),
+                user: VALID_ENV.MYSQL_USER,
+                password: VALID_ENV.MYSQL_PASSWORD,
+                database: VALID_ENV.MYSQL_DATABASE,
+            },
             jwtSecret: VALID_ENV.JWT_SECRET,
             port: 4000,
             corsOrigin: VALID_ENV.CORS_ORIGIN,

@@ -27,11 +27,9 @@
 // though their run count is the same as every other property here.
 
 const crypto = require('crypto');
+const { Item, InventoryRecord, InventoryTransaction } = require('../setup/tables');
 const fc = require('fast-check');
 
-const Item = require('../../src/models/Item');
-const InventoryRecord = require('../../src/models/InventoryRecord');
-const InventoryTransaction = require('../../src/models/InventoryTransaction');
 const inventoryService = require('../../src/services/inventory.service');
 const { adjustMovementReference } = require('../../src/services/movementReference');
 const { withTransaction } = require('../../src/db/withTransaction');
@@ -49,7 +47,7 @@ const RUNS_PROPERTY_6 = { numRuns: 25 };
 const RUNS_PROPERTY_7 = { numRuns: 25 };
 
 // A long timeout for the two sequence-driven properties: each run issues up to 20 real
-// HTTP requests against the in-memory replica set, and fast-check repeats that `numRuns`
+// HTTP requests against the test database, and fast-check repeats that `numRuns`
 // times inside a single Jest `test()`.
 const SEQUENCE_TEST_TIMEOUT = 120000;
 

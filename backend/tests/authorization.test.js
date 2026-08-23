@@ -10,11 +10,9 @@
 // this file in task 5.12, once POST /api/inventory exists.
 
 const jwt = require('jsonwebtoken');
+const { User, InventoryRecord, InventoryTransaction } = require('./setup/tables');
 
 const config = require('../src/config');
-const User = require('../src/models/User');
-const InventoryRecord = require('../src/models/InventoryRecord');
-const InventoryTransaction = require('../src/models/InventoryTransaction');
 const { ROLES, WRITE_ROUTE_PERMISSIONS } = require('../src/permissions');
 const { app: realApp, agent } = require('./setup/agent');
 const {

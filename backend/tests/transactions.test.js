@@ -1,5 +1,5 @@
 // backend/tests/transactions.test.js -- unit tests for src/db/withTransaction.js: rollback
-// totality on an injected mid-transaction failure, open MongoDB client session count
+// totality on an injected mid-transaction failure, in-use pool connection count
 // returning to its pre-request baseline, the retry count and CONCURRENT_MODIFICATION at
 // exhaustion, and a graceful shutdown smoke test (Req 8.2, 8.3, 8.4, 8.5, 8.8).
 //
@@ -8,15 +8,14 @@
 // directly, one failure mode at a time.
 
 const path = require('path');
+const { InventoryRecord, InventoryTransaction } = require('./setup/tables');
 const { spawn } = require('child_process');
 
 const { withTransaction, MAX_RETRIES } = require('../src/db/withTransaction');
 const { applyMovement } = require('../src/services/inventory.service');
-const InventoryRecord = require('../src/models/InventoryRecord');
-const InventoryTransaction = require('../src/models/InventoryTransaction');
 const AppError = require('../src/errors/AppError');
 const { agent } = require('./setup/agent');
-const { getOpenSessionCount } = require('./setup/sessionCount');
+const { getInUseConnectionCount } = require('./setup/poolCount');
 const { FIXTURE_INVENTORY_RECORDS, FIXTURE_ITEMS, FIXTURE_LOCATIONS, tokenFor } = require('./setup/seedFixture');
 
 const post = async (route, body, role = 'Admin') =>
@@ -26,30 +25,30 @@ const post = async (route, body, role = 'Admin') =>
         .send(body);
 
 describe('rollback totality on an injected mid-transaction failure (Req 8.2, 8.8)', () => {
-    test('a transaction whose second write fails leaves every document it touched at its exact pre-transaction value', async () => {
+    test('a transaction whose second write fails leaves every row it touched at its exact pre-transaction value', async () => {
         const recordId = FIXTURE_INVENTORY_RECORDS.widgetMainBatchA.id;
 
         const before = await InventoryRecord.findById(recordId).lean();
         const ledgerBefore = await InventoryTransaction.find({ inventoryRecord: recordId }).lean();
 
         // Two applyMovement calls in one withTransaction: the first commits nothing by
-        // itself (nothing is visible outside the session yet), and the second reuses the
-        // same movementReference the first just wrote, so InventoryTransaction's unique
-        // index rejects it with a duplicate-key error before this transaction can commit
-        // (Req 4.5). The whole transaction -- including the first, otherwise-legal write --
-        // must therefore leave no trace.
+        // itself (nothing it wrote is visible outside this connection yet), and the second
+        // reuses the same movementReference the first just wrote, so the UNIQUE index on
+        // inventory_transactions.movement_reference rejects it with ER_DUP_ENTRY before this
+        // transaction can commit (Req 4.5). The whole transaction -- including the first,
+        // otherwise-legal write -- must therefore leave no trace.
         const duplicateRef = 'transactions-test-rollback-duplicate-ref';
         await expect(
-            withTransaction(async (session) => {
+            withTransaction(async (tx) => {
                 await applyMovement(
                     recordId,
                     { physicalDelta: 5, reservedDelta: 0, movementReference: duplicateRef },
-                    session
+                    tx
                 );
                 await applyMovement(
                     recordId,
                     { physicalDelta: 5, reservedDelta: 0, movementReference: duplicateRef },
-                    session
+                    tx
                 );
             })
         ).rejects.toMatchObject({ code: 'DUPLICATE_INVENTORY_TRANSACTION' });
@@ -64,9 +63,9 @@ describe('rollback totality on an injected mid-transaction failure (Req 8.2, 8.8
     });
 });
 
-describe('open MongoDB client session count returns to baseline (Req 8.3)', () => {
-    test('a successful transactional HTTP request leaves the open session count unchanged', async () => {
-        const before = await getOpenSessionCount();
+describe('in-use pool connection count returns to baseline (Req 8.3)', () => {
+    test('a successful transactional HTTP request leaves the in-use pool connection count unchanged', async () => {
+        const before = await getInUseConnectionCount();
 
         const response = await post('/api/inventory', {
             item: FIXTURE_ITEMS.gadget.id,
@@ -77,14 +76,14 @@ describe('open MongoDB client session count returns to baseline (Req 8.3)', () =
         });
         expect(response.status).toBe(201);
 
-        const after = await getOpenSessionCount();
+        const after = await getInUseConnectionCount();
         expect(after).toBe(before);
     });
 
-    test('an HTTP request that fails inside the transaction also leaves the open session count unchanged', async () => {
+    test('an HTTP request that fails inside the transaction also leaves the in-use pool connection count unchanged', async () => {
         const recordId = FIXTURE_INVENTORY_RECORDS.widgetMainBatchB.id; // physical 50, reserved 0
 
-        const before = await getOpenSessionCount();
+        const before = await getInUseConnectionCount();
 
         // OUT 1,000 against a physical quantity of 50 drives assertSufficientPhysical to
         // throw INSUFFICIENT_PHYSICAL_QUANTITY, a non-transient error that aborts the
@@ -97,20 +96,26 @@ describe('open MongoDB client session count returns to baseline (Req 8.3)', () =
         expect(response.status).toBe(409);
         expect(response.body.code).toBe('INSUFFICIENT_PHYSICAL_QUANTITY');
 
-        const after = await getOpenSessionCount();
+        const after = await getInUseConnectionCount();
         expect(after).toBe(before);
     });
 });
 
 describe('retry count and CONCURRENT_MODIFICATION at exhaustion (Req 8.5)', () => {
     test('a callback that always throws a transient error runs exactly 4 times then rejects with 409 CONCURRENT_MODIFICATION', async () => {
-        // A plain Error carrying the driver's own transient-error label shape
-        // (hasErrorLabel), so withTransaction's isTransient() check sees exactly what a
-        // real MongoDB write-conflict error would present, without needing to provoke a
-        // real one on demand.
+        // A plain Error carrying the two fields mysql2 sets on a real deadlock -- `code`
+        // 'ER_LOCK_DEADLOCK' and `errno` 1213 -- so withTransaction's isTransient() check
+        // sees exactly what InnoDB choosing this transaction as its deadlock victim would
+        // present, without having to provoke a genuine deadlock on demand.
+        //
+        // Provoking one for real is what tests/concurrency.test.js does; this test is about
+        // the retry BUDGET, which needs an error that is transient every single time. A real
+        // deadlock resolves on the retry, so it can never exhaust the budget.
         const makeTransientError = () => {
             const error = new Error('simulated transient transaction error');
-            error.hasErrorLabel = (label) => label === 'TransientTransactionError';
+            error.code = 'ER_LOCK_DEADLOCK';
+            error.errno = 1213;
+            error.sqlState = '40001';
             return error;
         };
 
@@ -180,9 +185,9 @@ describe('graceful shutdown smoke test (Req 8.4)', () => {
 
         const child = spawn(process.execPath, ['-e', wrapperScript], {
             cwd: path.join(__dirname, '..'),
-            // Inherits MONGODB_URI / JWT_SECRET / CORS_ORIGIN from this worker's
-            // process.env (set by tests/setup/dbSetup.js from the same in-memory replica
-            // set every other test in this file uses); only PORT is overridden so this
+            // Inherits the MYSQL_* / JWT_SECRET / CORS_ORIGIN variables from this worker's
+            // process.env (set by tests/setup/dbSetup.js, pointing at the same throwaway test
+            // database every other test in this file uses); only PORT is overridden so this
             // spawned server never contends with a port another test process might hold.
             env: { ...process.env, PORT: '4319' },
         });

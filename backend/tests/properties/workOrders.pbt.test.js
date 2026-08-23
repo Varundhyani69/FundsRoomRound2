@@ -14,11 +14,9 @@
 // property for Requirements 6.5 and 6.10.
 
 const crypto = require('crypto');
+const { Item, InventoryRecord, WorkOrder } = require('../setup/tables');
 const fc = require('fast-check');
 
-const Item = require('../../src/models/Item');
-const WorkOrder = require('../../src/models/WorkOrder');
-const InventoryRecord = require('../../src/models/InventoryRecord');
 const { locationAvailableQuantity } = require('../../src/services/availability');
 const { agent } = require('../setup/agent');
 const { FIXTURE_LOCATIONS, FIXTURE_CATEGORIES, FIXTURE_USERS, tokenFor } =

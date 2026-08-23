@@ -7,10 +7,8 @@
 // (Req 12.13). The full role x route matrix for every write route lives in
 // authorization.test.js and src/permissions.js, so this file does not repeat it.
 
-const CustomerOrder = require('../src/models/CustomerOrder');
-const InventoryRecord = require('../src/models/InventoryRecord');
-const InventoryTransaction = require('../src/models/InventoryTransaction');
 const { agent } = require('./setup/agent');
+const { InventoryRecord, InventoryTransaction, CustomerOrder } = require('./setup/tables');
 const {
     FIXTURE_ITEMS,
     FIXTURE_LOCATIONS,

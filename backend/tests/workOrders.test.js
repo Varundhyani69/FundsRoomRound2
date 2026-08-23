@@ -8,8 +8,8 @@
 // only confirms POST /api/work-orders is actually wired into that map, the same spot-check
 // pattern inventory.test.js uses.
 
-const WorkOrder = require('../src/models/WorkOrder');
 const { agent } = require('./setup/agent');
+const { WorkOrder } = require('./setup/tables');
 const {
     FIXTURE_ITEMS,
     FIXTURE_LOCATIONS,

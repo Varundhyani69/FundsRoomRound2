@@ -20,7 +20,7 @@ const ERROR_CODES = Object.freeze({
     FORBIDDEN: 403, // role not permitted, unmapped write route, or unknown role
 
     // 404 - nothing matches
-    NOT_FOUND: 404, // well-formed id matching no document
+    NOT_FOUND: 404, // well-formed id matching no row
     ROUTE_NOT_FOUND: 404, // no declared route matches method and path
 
     // 409 - the request conflicts with current state

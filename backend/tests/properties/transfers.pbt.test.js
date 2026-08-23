@@ -21,12 +21,9 @@
 // Location, and Batch to be unique together, and the fresh Item already guarantees that.
 
 const crypto = require('crypto');
+const { Item, InventoryRecord, InventoryTransaction, InternalTransfer } = require('../setup/tables');
 const fc = require('fast-check');
 
-const Item = require('../../src/models/Item');
-const InternalTransfer = require('../../src/models/InternalTransfer');
-const InventoryRecord = require('../../src/models/InventoryRecord');
-const InventoryTransaction = require('../../src/models/InventoryTransaction');
 const { transferMovementReference } = require('../../src/services/movementReference');
 const { agent } = require('../setup/agent');
 const { FIXTURE_LOCATIONS, FIXTURE_CATEGORIES, tokenFor } = require('../setup/seedFixture');

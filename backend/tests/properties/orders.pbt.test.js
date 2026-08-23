@@ -18,12 +18,9 @@
 // iteration's.
 
 const crypto = require('crypto');
+const { Item, InventoryRecord, InventoryTransaction, CustomerOrder } = require('../setup/tables');
 const fc = require('fast-check');
 
-const Item = require('../../src/models/Item');
-const InventoryRecord = require('../../src/models/InventoryRecord');
-const InventoryTransaction = require('../../src/models/InventoryTransaction');
-const CustomerOrder = require('../../src/models/CustomerOrder');
 const { agent } = require('../setup/agent');
 const { FIXTURE_LOCATIONS, FIXTURE_CATEGORIES, tokenFor } = require('../setup/seedFixture');
 const { genConcurrentQuantities } = require('../setup/generators');
@@ -72,9 +69,10 @@ async function createFreshItem() {
 // batch every run.
 //
 // Batch labels are zero-padded index-based strings ("B00".."B04") generated in the same
-// order the array itself is built, so MongoDB's ascending string sort on `batch` reproduces
-// exactly the array order below -- the test can then walk `batches` by index instead of
-// re-deriving the sort order from label content.
+// order the array itself is built, so the `ORDER BY batch` that reserveAcrossBatches issues
+// reproduces exactly the array order below -- the test can then walk `batches` by index
+// instead of re-deriving the sort order from label content. The zero padding is what makes
+// that safe: these are strings, so "B10" would sort before "B2" without it.
 const genBatchAvailability = fc.integer({ min: 1, max: 1000 }).chain((physicalQuantity) =>
     fc.integer({ min: 0, max: physicalQuantity - 1 }).map((reservedQuantity) => ({
         physicalQuantity,

@@ -8,9 +8,9 @@
 // "contains".
 
 const jwt = require('jsonwebtoken');
+const { User } = require('./setup/tables');
 
 const config = require('../src/config');
-const User = require('../src/models/User');
 const { ROLES } = require('../src/permissions');
 const { agent } = require('./setup/agent');
 const {
@@ -134,8 +134,10 @@ describe('GET /api/users (Req 1.1, 3.2)', () => {
 
     test('the raw response text contains none of the stored hashes', async () => {
         // Read the hashes as stored, so this compares against the real values rather
-        // than against a guess at what a bcrypt hash looks like.
-        const stored = await User.find().select('+passwordHash').lean();
+        // than against a guess at what a bcrypt hash looks like. No `.select()` is needed:
+        // tests/setup/tables.js returns `passwordHash` because it names the column
+        // explicitly, whereas the login query is the only place in src/ that does (Req 1.1).
+        const stored = await User.find();
         expect(stored).toHaveLength(EXPECTED_USERS.length);
 
         const response = await get('/api/users', await tokenFor('Admin'));

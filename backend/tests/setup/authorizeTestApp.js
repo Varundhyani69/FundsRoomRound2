@@ -13,13 +13,13 @@
 // because Express only populates `req.route` once a route has matched.
 
 const express = require('express');
-const mongoose = require('mongoose');
+const { User } = require('./tables');
+const { newId } = require('../../src/db/id');
 const request = require('supertest');
 
 const authenticate = require('../../src/middleware/authenticate');
 const authorize = require('../../src/middleware/authorize');
 const errorHandler = require('../../src/middleware/errorHandler');
-const User = require('../../src/models/User');
 const { WRITE_ROUTE_PERMISSIONS } = require('../../src/permissions');
 
 // Every key in the map starts with this prefix, so one mount point reproduces every

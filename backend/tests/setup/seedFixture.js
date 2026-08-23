@@ -4,18 +4,19 @@
 // `seedFixture()`, so every test starts from this same known state and the suite passes
 // in any execution order.
 //
-// Only the API_Server's own modules are used to build the state: the models,
-// `hashPassword` from the Auth_Service, and `openingMovementReference` from the movement
-// reference builders, so the fixture cannot drift from how a real document is stored.
+// Only the API_Server's own modules are used to build the state: the shared pool, `ROLES` from
+// the permission map, `hashPassword` from the Auth_Service, and `openingMovementReference` from
+// the movement reference builders, so the fixture cannot drift from how a real row is stored.
+//
+// The fixed ids below are 24-character hex strings, which is exactly the CHAR(24) primary key
+// shape src/db/id.js generates -- so they survived the migration from MongoDB unchanged, and
+// every test that names one still names the same row.
 
 const crypto = require('crypto');
 
-const Category = require('../../src/models/Category');
-const Item = require('../../src/models/Item');
-const Location = require('../../src/models/Location');
-const User = require('../../src/models/User');
-const InventoryRecord = require('../../src/models/InventoryRecord');
-const InventoryTransaction = require('../../src/models/InventoryTransaction');
+const { query } = require('../../src/db/pool');
+const { newId } = require('../../src/db/id');
+const { ROLES } = require('../../src/permissions');
 const { hashPassword, login } = require('../../src/services/auth.service');
 const { openingMovementReference } = require('../../src/services/movementReference');
 
@@ -175,10 +176,10 @@ async function hashFor(role) {
  * @returns {Promise<typeof FIXTURE_USERS>} the fixture description, ids included
  */
 async function seedUsers() {
-    // Guard, not decoration: if the Role enum ever grows, the fixture stops silently
-    // covering only some of the Roles and this fails loudly instead.
-    const schemaRoles = User.schema.path('role').enumValues;
-    const missing = schemaRoles.filter((role) => !FIXTURE_USERS[role]);
+    // Guard, not decoration: if the Role set ever grows, the fixture stops silently covering
+    // only some of the Roles and this fails loudly instead. ROLES is read from
+    // src/permissions.js -- the same list the schema's ENUM and the authorize middleware use.
+    const missing = ROLES.filter((role) => !FIXTURE_USERS[role]);
     if (missing.length > 0) {
         throw new Error(
             `tests/setup/seedFixture.js has no User for role(s): ${missing.join(', ')}. ` +
@@ -186,58 +187,59 @@ async function seedUsers() {
         );
     }
 
-    await User.create(
-        await Promise.all(
-            schemaRoles.map(async (role) => ({
-                _id: FIXTURE_USERS[role].id,
-                email: FIXTURE_USERS[role].email,
-                passwordHash: await hashFor(role),
-                role,
-                // Only the Operations_User names one; the others stay unassigned.
-                assignedLocation: FIXTURE_USERS[role].assignedLocation ?? null,
-            }))
-        )
+    const rows = await Promise.all(
+        ROLES.map(async (role) => [
+            FIXTURE_USERS[role].id,
+            FIXTURE_USERS[role].email,
+            await hashFor(role),
+            role,
+            // Only the Operations_User names one; the others stay unassigned (Req 15.4).
+            FIXTURE_USERS[role].assignedLocation ?? null,
+        ])
+    );
+
+    // One multi-row INSERT rather than one per user: fewer round trips, and it runs before
+    // every single test in the suite.
+    await query(
+        `INSERT INTO users (id, email, password_hash, role, assigned_location_id)
+         VALUES ${rows.map(() => '(?, ?, ?, ?, ?)').join(', ')}`,
+        rows.flat()
     );
 
     return FIXTURE_USERS;
 }
 
 /**
- * Insert the reference data every other fixture row points at: the Locations, the
- * Category, and the Items belonging to it.
+ * Insert the reference data every other fixture row points at: the Locations, the Category,
+ * and the Items belonging to it.
  *
- * @returns {Promise<{
- *   locations: typeof FIXTURE_LOCATIONS,
- *   categories: typeof FIXTURE_CATEGORIES,
- *   items: typeof FIXTURE_ITEMS,
- * }>} the fixture description, ids included
+ * @returns {Promise<{ locations: object, categories: object, items: object }>}
  */
 async function seedReferenceData() {
-    // Locations and Categories reference nothing, so they can be written together. The
-    // Items follow, because each one names an existing Category (Req 3.2).
+    const locations = Object.values(FIXTURE_LOCATIONS);
+    const categories = Object.values(FIXTURE_CATEGORIES);
+    const items = Object.values(FIXTURE_ITEMS);
+
+    // Locations and Categories reference nothing, so they go in together. The Items follow,
+    // because each one names an existing Category and the foreign key is checked immediately
+    // (Req 3.2) -- unlike the old MongoDB fixture, where insert order was merely convention.
     await Promise.all([
-        Location.create(
-            Object.values(FIXTURE_LOCATIONS).map(({ id, code, name }) => ({
-                _id: id,
-                code,
-                name,
-            }))
+        query(
+            `INSERT INTO locations (id, code, name)
+             VALUES ${locations.map(() => '(?, ?, ?)').join(', ')}`,
+            locations.flatMap(({ id, code, name }) => [id, code, name])
         ),
-        Category.create(
-            Object.values(FIXTURE_CATEGORIES).map(({ id, name }) => ({
-                _id: id,
-                name,
-            }))
+        query(
+            `INSERT INTO categories (id, name)
+             VALUES ${categories.map(() => '(?, ?)').join(', ')}`,
+            categories.flatMap(({ id, name }) => [id, name])
         ),
     ]);
 
-    await Item.create(
-        Object.values(FIXTURE_ITEMS).map(({ id, code, name, category }) => ({
-            _id: id,
-            code,
-            name,
-            category,
-        }))
+    await query(
+        `INSERT INTO items (id, code, name, category_id)
+         VALUES ${items.map(() => '(?, ?, ?, ?)').join(', ')}`,
+        items.flatMap(({ id, code, name, category }) => [id, code, name, category])
     );
 
     return {
@@ -251,59 +253,63 @@ async function seedReferenceData() {
  * Insert the three Inventory_Records of `FIXTURE_INVENTORY_RECORDS`, plus the ledger rows
  * that back them.
  *
- * Every record is written together with its Inventory_Transaction rows rather than through
- * a bare `InventoryRecord.create`, so the fixture itself already satisfies the ledger
- * reconstruction property (Req 4.7) instead of only becoming provable once a test moves a
- * record. Each record gets its opening row (physicalDelta = physicalQuantity, Req 4.9), and,
- * for the one record seeded with a starting Reserved_Quantity, one further row moving that
- * quantity into `reservedQuantity`.
+ * Every record is written together with its inventory_transactions rows rather than alone, so
+ * the fixture itself already satisfies the ledger reconstruction property (Req 4.7) instead of
+ * only becoming provable once a test moves a record. Each record gets its opening row
+ * (physical_delta = physical_quantity, Req 4.9), and the one record seeded with a starting
+ * reserved quantity gets a second row moving that quantity into reserved_quantity.
  *
- * @returns {Promise<typeof FIXTURE_INVENTORY_RECORDS>} the fixture description, ids included
+ * @returns {Promise<typeof FIXTURE_INVENTORY_RECORDS>}
  */
 async function seedInventoryRecords() {
     const records = Object.values(FIXTURE_INVENTORY_RECORDS);
 
-    await InventoryRecord.create(
-        records.map(({ id, item, location, batch, physicalQuantity, reservedQuantity }) => ({
-            _id: id,
+    await query(
+        `INSERT INTO inventory_records
+             (id, item_id, location_id, batch, physical_quantity, reserved_quantity)
+         VALUES ${records.map(() => '(?, ?, ?, ?, ?, ?)').join(', ')}`,
+        records.flatMap(({ id, item, location, batch, physicalQuantity, reservedQuantity }) => [
+            id,
             item,
             location,
             batch,
             physicalQuantity,
             reservedQuantity,
-        }))
+        ])
     );
 
-    const appliedAt = new Date();
     const transactions = [];
 
     for (const record of records) {
-        transactions.push({
-            inventoryRecord: record.id,
-            physicalDelta: record.physicalQuantity,
-            reservedDelta: 0,
-            movementReference: openingMovementReference(record.id),
-            appliedAt,
-            createdBy: null,
-        });
+        transactions.push([
+            newId(),
+            record.id,
+            record.physicalQuantity,
+            0,
+            openingMovementReference(record.id),
+        ]);
 
         if (record.reservedQuantity > 0) {
             // Not `reserveMovementReference`: that builder names a Customer_Order id, and no
             // order exists behind this starting reservation. A fixture-only reference is
             // enough, since uniqueness only has to hold against the other rows this module
             // writes.
-            transactions.push({
-                inventoryRecord: record.id,
-                physicalDelta: 0,
-                reservedDelta: record.reservedQuantity,
-                movementReference: `FIXTURE:${record.id}:RESERVE`,
-                appliedAt,
-                createdBy: null,
-            });
+            transactions.push([
+                newId(),
+                record.id,
+                0,
+                record.reservedQuantity,
+                `FIXTURE:${record.id}:RESERVE`,
+            ]);
         }
     }
 
-    await InventoryTransaction.create(transactions);
+    await query(
+        `INSERT INTO inventory_transactions
+             (id, inventory_record_id, physical_delta, reserved_delta, movement_reference)
+         VALUES ${transactions.map(() => '(?, ?, ?, ?, ?)').join(', ')}`,
+        transactions.flat()
+    );
 
     return FIXTURE_INVENTORY_RECORDS;
 }
@@ -311,17 +317,13 @@ async function seedInventoryRecords() {
 /**
  * Load the whole fixture. Called from the `beforeEach` in dbSetup.js.
  *
- * @returns {Promise<{
- *   users: typeof FIXTURE_USERS,
- *   locations: typeof FIXTURE_LOCATIONS,
- *   categories: typeof FIXTURE_CATEGORIES,
- *   items: typeof FIXTURE_ITEMS,
- *   inventoryRecords: typeof FIXTURE_INVENTORY_RECORDS,
- * }>}
+ * @returns {Promise<object>} every fixture description, ids included
  */
 async function seedFixture() {
     // Reference data first: the seeded Operations_User names a fixture Location, and the
-    // Inventory_Records name fixture Items and Locations, so both have to exist first.
+    // Inventory_Records name fixture Items and Locations. Under MongoDB this ordering was a
+    // convention; here the foreign keys enforce it, so getting it wrong fails immediately
+    // rather than leaving a dangling reference.
     const reference = await seedReferenceData();
     const users = await seedUsers();
     const inventoryRecords = await seedInventoryRecords();
@@ -330,8 +332,8 @@ async function seedFixture() {
 }
 
 /**
- * A valid access token for the seeded User of a Role, obtained through the real login
- * path, so a token used by a test is exactly a token the API_Server issues.
+ * A valid access token for the seeded User of a Role, obtained through the real login path, so
+ * a token used by a test is exactly a token the API_Server issues.
  *
  * @param {'Admin'|'OperationsUser'|'SalesUser'} role
  * @returns {Promise<string>} the signed JSON Web Token

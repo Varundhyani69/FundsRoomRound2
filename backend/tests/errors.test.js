@@ -17,8 +17,11 @@ const ERROR_CODES = require('../src/errors/errorCodes');
 // anything real; they only have to be recognisable in a response body.
 const LEAKED_FILE_PATH = 'E:\\fake\\project\\src\\services\\inventory.service.js';
 const LEAKED_MODULE = 'fakeInventoryServiceModule';
+// A realistic MySQL duplicate-key message. The error handler must never echo raw database
+// text like this to a client: it names a real index and table, which tells an attacker about
+// the schema (Req 9.7).
 const LEAKED_DB_TEXT =
-    'MongoServerError: E11000 duplicate key error collection: fakedb.faketransactions index: fake_reference_1';
+    "Duplicate entry 'fake-reference-1' for key 'inventory_transactions.uq_inventory_transactions_movement_reference'";
 const LEAKED_STRINGS = [LEAKED_FILE_PATH, LEAKED_MODULE, LEAKED_DB_TEXT];
 
 /**
@@ -204,7 +207,13 @@ describe('INTERNAL_ERROR hygiene', () => {
 
     test('an untranslated duplicate-key error returns 409 DUPLICATE_INVENTORY_TRANSACTION', async () => {
         const app = appThatThrows(() => {
-            throw Object.assign(new Error(LEAKED_DB_TEXT), { code: 11000 });
+            // The shape mysql2 raises for a UNIQUE index violation. A service is expected to
+            // catch this and map it to a business code; the handler's safety net exists for
+            // the case where one forgets, so a raw driver error never reaches a client.
+            throw Object.assign(new Error(LEAKED_DB_TEXT), {
+                code: 'ER_DUP_ENTRY',
+                errno: 1062,
+            });
         });
 
         const response = await request(app).get('/boom');

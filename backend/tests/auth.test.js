@@ -5,17 +5,15 @@
 // inside the test rather than being called directly (Req 12.13).
 
 const express = require('express');
+const { User } = require('./setup/tables');
 const request = require('supertest');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
-const mongoose = require('mongoose');
-
 const config = require('../src/config');
-const User = require('../src/models/User');
 const authenticate = require('../src/middleware/authenticate');
 const errorHandler = require('../src/middleware/errorHandler');
 const { agent } = require('./setup/agent');
-const { FIXTURE_USERS } = require('./setup/seedFixture');
+const { FIXTURE_USERS, FIXTURE_LOCATIONS } = require('./setup/seedFixture');
 
 const LOGIN = '/api/auth/login';
 const admin = FIXTURE_USERS.Admin;
@@ -69,7 +67,11 @@ describe('POST /api/auth/login -- accepted credentials (Req 1.1, 1.6)', () => {
 
     test('reports the assigned location of the caller (Req 1.1)', async () => {
         const ops = FIXTURE_USERS.OperationsUser;
-        const locationId = new mongoose.Types.ObjectId();
+        // A real fixture Location, not a freshly generated id: under MongoDB any well-formed
+        // ObjectId would store, but users.assigned_location_id is now a foreign key into
+        // locations, so an id naming no location is refused by the database -- which is the
+        // point of the constraint.
+        const locationId = FIXTURE_LOCATIONS.main.id;
         await User.updateOne({ _id: ops.id }, { assignedLocation: locationId });
 
         const response = await agent()

@@ -6,7 +6,17 @@
 const AppError = require('../errors/AppError');
 const ERROR_CODES = require('../errors/errorCodes');
 
-const MONGO_DUPLICATE_KEY = 11000;
+// MySQL's unique-index violation. mysql2 sets both `code` (a string) and `errno` (the
+// numeric MySQL error), so either is checked -- a driver upgrade that stopped populating one
+// of them would otherwise silently disable this safety net.
+const MYSQL_DUPLICATE_KEY_CODE = 'ER_DUP_ENTRY';
+const MYSQL_DUPLICATE_KEY_ERRNO = 1062;
+
+const isDuplicateKeyError = (error) =>
+    Boolean(
+        error &&
+        (error.code === MYSQL_DUPLICATE_KEY_CODE || error.errno === MYSQL_DUPLICATE_KEY_ERRNO)
+    );
 
 /**
  * Sends the one permitted response shape and records the code for the request
@@ -46,7 +56,7 @@ function errorHandler(error, req, res, next) {
     }
 
     // Safety net for a unique-index violation that no service translated.
-    if (error && error.code === MONGO_DUPLICATE_KEY) {
+    if (isDuplicateKeyError(error)) {
         return send(
             res,
             'DUPLICATE_INVENTORY_TRANSACTION',

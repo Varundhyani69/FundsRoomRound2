@@ -6,6 +6,7 @@
 // reported case is reproducible (Req 12.7).
 
 const fc = require('fast-check');
+const { Item, InventoryRecord, WorkOrder, InternalTransfer, CustomerOrder } = require('../setup/tables');
 
 const { loadConfig, REQUIRED } = require('../../src/config');
 
@@ -13,7 +14,11 @@ const { loadConfig, REQUIRED } = require('../../src/config');
 const RUNS = { numRuns: 25 };
 
 const VALID_ENV = Object.freeze({
-    MONGODB_URI: 'mongodb://127.0.0.1:27017/mini_operations_erp',
+    MYSQL_HOST: '127.0.0.1',
+    MYSQL_PORT: '3306',
+    MYSQL_USER: 'erp_test',
+    MYSQL_PASSWORD: 'not-a-real-password',
+    MYSQL_DATABASE: 'mini_operations_erp',
     JWT_SECRET: 'a'.repeat(40),
     PORT: '4000',
     CORS_ORIGIN: 'http://localhost:5173',
@@ -24,11 +29,20 @@ const isBlank = (value) => typeof value !== 'string' || value.trim() === '';
 
 // Feature: mini-operations-erp, Property 18: The config loader accepts exactly the valid environments
 describe('Property 18: The config loader accepts exactly the valid environments', () => {
-    // Non-empty subsets of the four required names, in declaration order.
+    // Non-empty subsets of the required names, in declaration order.
     const genRequiredSubset = fc.subarray(REQUIRED, { minLength: 1 });
 
     // Each way a variable can be blank, including removing it altogether.
     const genBlankForm = fc.constantFrom(undefined, '', ' ', '\t', '   \n  ');
+
+    // MYSQL_PASSWORD is the one required variable the loader checks for PRESENCE only: a
+    // local MySQL user with no password is a legitimate setup, so an empty or whitespace
+    // value is accepted and only an ABSENT variable is missing. Every other required name
+    // treats any blank form as missing. Modelling that here rather than dropping
+    // MYSQL_PASSWORD from the generator keeps the property covering it in both directions --
+    // absent must fail, empty must not.
+    const isMissingToLoader = (name, blankForm) =>
+        name === 'MYSQL_PASSWORD' ? blankForm === undefined : true;
 
     const genPortString = fc.oneof(
         fc.string({ maxLength: 8 }),
@@ -43,38 +57,65 @@ describe('Property 18: The config loader accepts exactly the valid environments'
         fc.integer({ min: 0, max: 64 }).map((length) => 'x'.repeat(length))
     );
 
-    test('every non-empty blanked subset fails with a single message naming exactly that subset', () => {
+    test('every blanked subset fails with a single message naming exactly the variables the loader counts as missing', () => {
         fc.assert(
-            fc.property(genRequiredSubset, fc.array(genBlankForm, { minLength: 4, maxLength: 4 }), (subset, blanks) => {
-                const env = { ...VALID_ENV };
-                subset.forEach((name, index) => {
-                    const blank = blanks[index % blanks.length];
-                    if (blank === undefined) {
-                        delete env[name];
-                    } else {
-                        env[name] = blank;
+            fc.property(
+                genRequiredSubset,
+                // One independent blank form per required name, so which variable gets which
+                // form is part of what the property explores.
+                fc.array(genBlankForm, {
+                    minLength: REQUIRED.length,
+                    maxLength: REQUIRED.length,
+                }),
+                (subset, blanks) => {
+                    const env = { ...VALID_ENV };
+                    const blankedWith = new Map();
+
+                    subset.forEach((name, index) => {
+                        const blank = blanks[index % blanks.length];
+                        blankedWith.set(name, blank);
+                        if (blank === undefined) {
+                            delete env[name];
+                        } else {
+                            env[name] = blank;
+                        }
+                    });
+
+                    // Filtered from REQUIRED rather than from `subset`, so the expected order
+                    // is the loader's declaration order by construction.
+                    const expectedMissing = REQUIRED.filter(
+                        (name) =>
+                            blankedWith.has(name) &&
+                            isMissingToLoader(name, blankedWith.get(name))
+                    );
+
+                    const result = loadConfig(env);
+
+                    // The subset blanked only MYSQL_PASSWORD, and blanked it to a present-but-
+                    // empty value -- which the loader accepts, so nothing is missing.
+                    if (expectedMissing.length === 0) {
+                        expect(result.ok).toBe(true);
+                        return;
                     }
-                });
 
-                const result = loadConfig(env);
+                    // Non-zero exit is what loadOrExit does with any !ok result; the pure
+                    // loader reports it as ok: false with the messages to print.
+                    expect(result.ok).toBe(false);
+                    expect(result.errors).toHaveLength(1);
+                    expect(result.errors[0]).toBe(
+                        `Missing required environment variables: ${expectedMissing.join(', ')}`
+                    );
 
-                // Non-zero exit is what loadOrExit does with any !ok result; the pure
-                // loader reports it as ok: false with the messages to print.
-                expect(result.ok).toBe(false);
-                expect(result.errors).toHaveLength(1);
-                expect(result.errors[0]).toBe(
-                    `Missing required environment variables: ${subset.join(', ')}`
-                );
-
-                // Exactly that subset: no other required name is named.
-                const named = result.errors[0]
-                    .replace('Missing required environment variables: ', '')
-                    .split(', ');
-                expect(named).toEqual(subset);
-                for (const name of REQUIRED.filter((n) => !subset.includes(n))) {
-                    expect(named).not.toContain(name);
+                    // Exactly those names: no other required name is named.
+                    const named = result.errors[0]
+                        .replace('Missing required environment variables: ', '')
+                        .split(', ');
+                    expect(named).toEqual(expectedMissing);
+                    for (const name of REQUIRED.filter((n) => !expectedMissing.includes(n))) {
+                        expect(named).not.toContain(name);
+                    }
                 }
-            }),
+            ),
             RUNS
         );
     });
@@ -146,13 +187,8 @@ const config = require('../../src/config');
 const ERROR_CODES = require('../../src/errors/errorCodes');
 const { ROLES, WRITE_ROUTE_PERMISSIONS } = require('../../src/permissions');
 const { withTransaction } = require('../../src/db/withTransaction');
-const Item = require('../../src/models/Item');
-const InventoryRecord = require('../../src/models/InventoryRecord');
-const WorkOrder = require('../../src/models/WorkOrder');
-const InternalTransfer = require('../../src/models/InternalTransfer');
-const CustomerOrder = require('../../src/models/CustomerOrder');
 const { agent } = require('../setup/agent');
-const { getOpenSessionCount } = require('../setup/sessionCount');
+const { getInUseConnectionCount } = require('../setup/poolCount');
 const {
     callRoute,
     UNMAPPED_WRITE_ROUTE,
@@ -171,7 +207,7 @@ const { genRole, genMalformedId, genUnusedObjectId } = require('../setup/generat
 // Feature: mini-operations-erp, Property 17: Sessions and retries are bounded
 describe('Property 17: Sessions and retries are bounded', () => {
     // Pure DB-session mechanics -- withTransaction starts and ends a real session per
-    // attempt against the in-memory replica set, but does no HTTP round trip and no
+    // attempt against the real test database, but does no HTTP round trip and no
     // application-level write. Kept at exactly the numRuns: 25 floor of Req 12.7 for suite
     // speed.
     const RUNS_PROPERTY_17_RETRY = { numRuns: 25 };
@@ -179,13 +215,19 @@ describe('Property 17: Sessions and retries are bounded', () => {
     // at the Req 12.7 floor.
     const RUNS_PROPERTY_17_SESSION = { numRuns: 25 };
 
-    // A plain Error carrying the driver's own transient-error label shape (hasErrorLabel),
-    // the same technique tests/transactions.test.js's single k=4-always-fails case uses.
-    // Here k ranges over 0..5 so the property covers both sides of the retry boundary
-    // instead of only the one edge that unit test already pins down.
+    // A plain Error carrying the two fields mysql2 sets on a real InnoDB deadlock -- `code`
+    // 'ER_LOCK_DEADLOCK' and `errno` 1213 -- which is exactly what withTransaction's
+    // isTransient() inspects. Same technique as tests/transactions.test.js's single
+    // k=4-always-fails case; here k ranges over 0..5 so the property covers both sides of the
+    // retry boundary instead of only the one edge that unit test already pins down.
+    //
+    // Simulated rather than provoked because a genuine deadlock resolves on its retry, so it
+    // can only ever produce k = 1. tests/concurrency.test.js covers the real thing.
     function makeTransientError() {
         const error = new Error('simulated transient transaction error');
-        error.hasErrorLabel = (label) => label === 'TransientTransactionError';
+        error.code = 'ER_LOCK_DEADLOCK';
+        error.errno = 1213;
+        error.sqlState = '40001';
         return error;
     }
 
@@ -226,7 +268,7 @@ describe('Property 17: Sessions and retries are bounded', () => {
         );
     });
 
-    test('the open MongoDB session count returns to its pre-request baseline after every request in a mix of succeeding and failing requests', async () => {
+    test('the in-use pool connection count returns to its pre-request baseline after every request in a mix of succeeding and failing requests', async () => {
         const adminToken = await tokenFor('Admin');
         let counter = 0;
 
@@ -268,7 +310,7 @@ describe('Property 17: Sessions and retries are bounded', () => {
                 });
 
                 for (const request of mix) {
-                    const before = await getOpenSessionCount();
+                    const before = await getInUseConnectionCount();
                     let response;
 
                     if (request.kind === 'createValid') {
@@ -310,7 +352,7 @@ describe('Property 17: Sessions and retries are bounded', () => {
                         expect(response.status).toBe(409);
                     }
 
-                    const after = await getOpenSessionCount();
+                    const after = await getInUseConnectionCount();
                     expect(after).toBe(before);
                 }
             }),
@@ -327,7 +369,7 @@ function assertCleanMessage(message) {
     expect(message.length).toBeGreaterThan(0);
     expect(message).not.toMatch(/[\\/][\w.-]+\.js/i); // a file path
     expect(message).not.toMatch(/\bat\s+\S+\s*\(/); // a stack frame
-    expect(message.toLowerCase()).not.toMatch(/mongoserver|mongoose|e11000|stack trace/);
+    expect(message.toLowerCase()).not.toMatch(/mysql|er_dup_entry|duplicate entry|for key '|stack trace/);
 }
 
 // Feature: mini-operations-erp, Property 15: Every rejected request answers from the declared code table and changes nothing

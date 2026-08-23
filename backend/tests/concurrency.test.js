@@ -14,10 +14,8 @@
 // supertest `Test` object's underlying HTTP request, so both requests are in flight before
 // either one's response arrives.
 
-const CustomerOrder = require('../src/models/CustomerOrder');
-const InventoryRecord = require('../src/models/InventoryRecord');
-const InternalTransfer = require('../src/models/InternalTransfer');
 const { agent } = require('./setup/agent');
+const { InventoryRecord, InternalTransfer, CustomerOrder } = require('./setup/tables');
 const { FIXTURE_ITEMS, FIXTURE_LOCATIONS, tokenFor } = require('./setup/seedFixture');
 
 const CREATE_ORDER = '/api/orders';
