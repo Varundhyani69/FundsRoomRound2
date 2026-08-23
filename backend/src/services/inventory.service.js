@@ -1,60 +1,63 @@
-// backend/src/services/inventory.service.js -- the Inventory_Service: creates Inventory_Records,
-// adjusts them, reads them, and reads Location_Available_Quantity (Req 3.7, 3.8, 3.9, 3.10, 3.11,
-// 3.12, 4.2, 4.3, 4.4, 4.6, 4.9, 8.1, 15.5).
+// backend/src/services/inventory.service.js -- inventory reads and the one place that
+// writes an inventory_records change together with its inventory_transactions ledger row
+// (Req 3.7-3.12, 4.2, 4.3, 4.4, 4.6, 4.9, 8.1, 15.5).
 //
-// `applyMovement` is the one function in the whole codebase that writes an InventoryRecord
-// change together with its InventoryTransaction ledger row (Req 4.4, 8.1). Every other
-// service that moves stock -- work orders (read-only, no write here), transfers, orders --
-// reuses it instead of restating the guard/ledger pattern.
+// Every quantity comparison in this file goes through a named guard function
+// (`assertSufficientPhysical`, `assertSufficientAvailable`) rather than being inlined at a
+// call site, so the rules live in one readable place and controllers hold none of them
+// (Req 15.5). The availability formula itself is not restated here at all -- it comes from
+// src/services/availability.js (Req 15.1).
 //
-// The two invariants of Req 3.8 are each a single named guard, not an inline comparison in a
-// controller or in this module's callers (Req 15.5):
-//   - assertSufficientPhysical: physicalQuantity must not go below 0 (Req 4.2)
-//   - assertSufficientAvailable: reservedQuantity must not exceed physicalQuantity (Req 4.3)
+// Concurrency, in SQL terms: `applyMovement` takes a row lock with
+// `SELECT ... FOR UPDATE` before it reads the balances it is about to change. InnoDB holds
+// that lock until the surrounding transaction commits, so two concurrent movements against
+// the same record are serialised rather than interleaved: the second one blocks, then reads
+// the first one's committed values and re-evaluates the guards against them. That is what
+// makes it impossible for two requests to both pass a check and then both write
+// (Req 7.4-7.7). A deadlock or lock-wait timeout between two such transactions is a timing
+// outcome, not a logical failure, and is retried by src/db/withTransaction.js.
 
-const mongoose = require('mongoose');
-
-const InventoryRecord = require('../models/InventoryRecord');
-const InventoryTransaction = require('../models/InventoryTransaction');
-const Item = require('../models/Item');
-const Location = require('../models/Location');
-const { withTransaction } = require('../db/withTransaction');
-const { locationAvailableQuantity } = require('./availability');
-const { openingMovementReference, adjustMovementReference } = require('./movementReference');
 const AppError = require('../errors/AppError');
 const ERROR_CODES = require('../errors/errorCodes');
+const { query } = require('../db/pool');
+const { withTransaction } = require('../db/withTransaction');
+const { newId } = require('../db/id');
+const { toInventoryRecord } = require('../db/mappers');
+const { availableQuantity, locationAvailableQuantity } = require('./availability');
+const { openingMovementReference, adjustMovementReference } = require('./movementReference');
 
-// Built fresh per call, the same way auth.service.js and withTransaction.js build their
-// AppError factories, so each thrown error carries its own stack.
+// --- error builders -------------------------------------------------------------------
+// Built fresh per call because AppError carries a per-request stack.
+
 const invalidReference = () =>
     new AppError(
         ERROR_CODES.INVALID_REFERENCE,
         'INVALID_REFERENCE',
-        'The referenced item or location does not exist.'
+        'A referenced item or location does not exist.'
     );
 
 const notFound = () =>
-    new AppError(ERROR_CODES.NOT_FOUND, 'NOT_FOUND', 'Inventory record not found.');
+    new AppError(ERROR_CODES.NOT_FOUND, 'NOT_FOUND', 'No inventory record matches that identifier.');
 
 const duplicateInventoryRecord = () =>
     new AppError(
         ERROR_CODES.DUPLICATE_INVENTORY_RECORD,
         'DUPLICATE_INVENTORY_RECORD',
-        'An inventory record for this item, location and batch already exists.'
+        'An inventory record already exists for that item, location and batch.'
     );
 
 const duplicateInventoryTransaction = () =>
     new AppError(
         ERROR_CODES.DUPLICATE_INVENTORY_TRANSACTION,
         'DUPLICATE_INVENTORY_TRANSACTION',
-        'This movement reference has already been applied.'
+        'That movement reference has already been applied.'
     );
 
 const insufficientPhysicalQuantity = () =>
     new AppError(
         ERROR_CODES.INSUFFICIENT_PHYSICAL_QUANTITY,
         'INSUFFICIENT_PHYSICAL_QUANTITY',
-        'This movement would set the physical quantity below 0.'
+        'This movement would drive the physical quantity below zero.'
     );
 
 const insufficientAvailableQuantity = () =>
@@ -63,6 +66,11 @@ const insufficientAvailableQuantity = () =>
         'INSUFFICIENT_AVAILABLE_QUANTITY',
         'This movement would reserve more than is physically on hand.'
     );
+
+/** True for a MySQL unique-index violation. */
+const isDuplicateKey = (error) => error && (error.code === 'ER_DUP_ENTRY' || error.errno === 1062);
+
+// --- guards ----------------------------------------------------------------------------
 
 /**
  * Guard 1 of Req 3.8: physicalQuantity must never go below 0.
@@ -99,270 +107,300 @@ function assertSufficientAvailable(
     }
 }
 
+// --- reads -----------------------------------------------------------------------------
+
+// The JOIN every inventory read shares, aliasing columns as `<relation>_<field>` so
+// src/db/mappers.js can rebuild the nested response shape. Declared once so a list read and
+// a single read cannot drift apart.
+const RECORD_SELECT = `
+    SELECT ir.id, ir.batch, ir.physical_quantity, ir.reserved_quantity,
+           ir.created_at, ir.updated_at,
+           i.id AS item_id, i.code AS item_code, i.name AS item_name,
+           c.id AS category_id, c.name AS category_name,
+           l.id AS location_id, l.code AS location_code, l.name AS location_name
+      FROM inventory_records ir
+      JOIN items i     ON i.id = ir.item_id
+      JOIN categories c ON c.id = i.category_id
+      JOIN locations l ON l.id = ir.location_id`;
+
 /**
- * Normalizes what a caller may pass as the movement target into a Mongoose filter for
- * `InventoryRecord.findOne`. Accepts an existing record's `_id` (as a string, ObjectId, or a
- * document/plain object carrying one), or a `{ item, location, batch }` triple such as the
- * one `transfer.service.js` passes when it only knows the record's identity, not its id.
+ * Reads one record back in the populated response shape, on the caller's connection when one
+ * is supplied so a write can return the value it just committed.
  *
- * @param {string|import('mongoose').Types.ObjectId|{ _id?: any, item?: any, location?: any, batch?: string }} recordFilterOrDoc
- * @returns {object} a Mongoose filter matching at most one InventoryRecord
+ * @param {string} id
+ * @param {import('mysql2/promise').PoolConnection} [tx]
  */
-function toRecordFilter(recordFilterOrDoc) {
-    if (
-        typeof recordFilterOrDoc === 'string' ||
-        recordFilterOrDoc instanceof mongoose.Types.ObjectId
-    ) {
-        return { _id: recordFilterOrDoc };
-    }
-
-    if (recordFilterOrDoc && recordFilterOrDoc._id) {
-        return { _id: recordFilterOrDoc._id };
-    }
-
-    // Assumed to be an { item, location, batch } filter object.
-    return recordFilterOrDoc;
+async function findRecordById(id, tx = null) {
+    const sql = `${RECORD_SELECT} WHERE ir.id = ?`;
+    const rows = tx ? (await tx.query(sql, [id]))[0] : await query(sql, [id]);
+    return rows.length > 0 ? toInventoryRecord(rows[0]) : null;
 }
 
 /**
- * The single place that writes an InventoryRecord change together with its
- * InventoryTransaction ledger row, always inside the caller's session (Req 4.4, 8.1).
+ * Lists records, optionally filtered by item and/or location (Req 3.3, 3.5).
  *
- * The record is re-read inside the caller's transaction first, so the guard check below sees
- * the value the transaction actually holds (including any earlier write this same
- * transaction made to the record), then the write is a conditional update whose filter
- * repeats the same guard as a `$expr` -- the authoritative decision comes from the update's
- * match result, not from the earlier read (Req 7.4 pattern, reused here for every mutation).
- *
- * @param {string|import('mongoose').Types.ObjectId|object} recordFilterOrDoc the target record's `_id`, or an `{ item, location, batch }` filter
- * @param {{ physicalDelta: number, reservedDelta: number, movementReference: string, createdBy?: string|null }} movement
- * @param {import('mongoose').ClientSession} session the caller's transaction session
- * @returns {Promise<import('mongoose').Types.ObjectId>} the affected record's `_id`
- * @throws {AppError} 404 NOT_FOUND when no record matches; 409 INSUFFICIENT_PHYSICAL_QUANTITY,
- *   INSUFFICIENT_AVAILABLE_QUANTITY, or DUPLICATE_INVENTORY_TRANSACTION on a guard or ledger failure
+ * @param {{ item?: string, location?: string }} [filters]
+ * @returns {Promise<object[]>}
  */
-async function applyMovement(recordFilterOrDoc, movement, session) {
+async function listInventoryRecords({ item, location } = {}) {
+    const conditions = [];
+    const params = [];
+
+    if (item) {
+        conditions.push('ir.item_id = ?');
+        params.push(item);
+    }
+    if (location) {
+        conditions.push('ir.location_id = ?');
+        params.push(location);
+    }
+
+    const where = conditions.length > 0 ? ` WHERE ${conditions.join(' AND ')}` : '';
+    // Ordered so a list response is stable across calls rather than in storage order, and
+    // by batch ascending to match the order reservations consume batches in (Req 15.6).
+    const rows = await query(`${RECORD_SELECT}${where} ORDER BY i.code, l.code, ir.batch`, params);
+    return rows.map(toInventoryRecord);
+}
+
+/**
+ * Location_Available_Quantity for one item at one location, summed across every batch
+ * (Req 3.5), reporting 0 rather than NOT_FOUND when no record exists (Req 3.12).
+ *
+ * The summation is done in JS by `locationAvailableQuantity` rather than with SQL's SUM(),
+ * so the availability rule has exactly one definition (Req 15.1). The row count here is at
+ * most the number of batches of one item at one location, so there is nothing to gain from
+ * pushing the arithmetic into the database.
+ *
+ * @param {{ item: string, location: string }} filters
+ * @returns {Promise<{ item: string, location: string, locationAvailableQuantity: number }>}
+ */
+async function getLocationAvailability({ item, location }) {
+    const rows = await query(
+        `SELECT physical_quantity, reserved_quantity
+           FROM inventory_records
+          WHERE item_id = ? AND location_id = ?`,
+        [item, location]
+    );
+
+    const records = rows.map((row) => ({
+        physicalQuantity: row.physical_quantity,
+        reservedQuantity: row.reserved_quantity,
+    }));
+
+    return { item, location, locationAvailableQuantity: locationAvailableQuantity(records) };
+}
+
+// --- the one write path ----------------------------------------------------------------
+
+/**
+ * Normalises what a caller may pass as the movement target into a locking SELECT plus its
+ * parameters. Accepts a record id (a string, or an object carrying `_id`), or an
+ * `{ item, location, batch }` triple such as the one transfer.service.js passes when it
+ * knows the record's identity but not its id.
+ *
+ * @param {string|{ _id?: string, item?: string, location?: string, batch?: string }} locator
+ * @returns {{ sql: string, params: any[] }}
+ */
+function toLockingSelect(locator) {
+    const base = `SELECT id, physical_quantity, reserved_quantity FROM inventory_records`;
+
+    if (typeof locator === 'string') {
+        return { sql: `${base} WHERE id = ? FOR UPDATE`, params: [locator] };
+    }
+    if (locator && locator._id) {
+        return { sql: `${base} WHERE id = ? FOR UPDATE`, params: [String(locator._id)] };
+    }
+    return {
+        sql: `${base} WHERE item_id = ? AND location_id = ? AND batch = ? FOR UPDATE`,
+        params: [locator.item, locator.location, locator.batch],
+    };
+}
+
+/**
+ * The single place that writes an inventory_records change together with its
+ * inventory_transactions ledger row, always on the caller's transaction (Req 4.4, 8.1).
+ *
+ * @param {string|object} locator the target record's id, or an `{ item, location, batch }` triple
+ * @param {{ physicalDelta: number, reservedDelta: number, movementReference: string, createdBy?: string|null }} movement
+ * @param {import('mysql2/promise').PoolConnection} tx the caller's transaction connection
+ * @returns {Promise<string>} the affected record's id
+ * @throws {AppError} 404 NOT_FOUND when no record matches; 409 INSUFFICIENT_PHYSICAL_QUANTITY,
+ *   INSUFFICIENT_AVAILABLE_QUANTITY, or DUPLICATE_INVENTORY_TRANSACTION
+ */
+async function applyMovement(locator, movement, tx) {
     const { physicalDelta, reservedDelta, movementReference, createdBy = null } = movement;
 
-    const filter = toRecordFilter(recordFilterOrDoc);
-    const current = await InventoryRecord.findOne(filter).session(session);
-    if (!current) {
+    // FOR UPDATE: locks the row for the rest of this transaction, so the balances read here
+    // cannot be changed by anyone else before the UPDATE below lands. This is what removes
+    // the read-then-write race entirely -- a second transaction targeting the same row waits
+    // here, then reads post-commit values (Req 7.4).
+    const locking = toLockingSelect(locator);
+    const [currentRows] = await tx.query(locking.sql, locking.params);
+    if (currentRows.length === 0) {
         throw notFound();
     }
 
-    // The same two comparisons the JS guards make, expressed for the query filter so the
-    // update only matches when the resulting state is legal (Req 3.8, 4.2, 4.3).
-    const guardedFilter = {
-        _id: current._id,
-        $expr: {
-            $and: [
-                { $gte: [{ $add: ['$physicalQuantity', physicalDelta] }, 0] },
-                {
-                    $lte: [
-                        { $add: ['$reservedQuantity', reservedDelta] },
-                        { $add: ['$physicalQuantity', physicalDelta] },
-                    ],
-                },
-            ],
-        },
-    };
+    const current = currentRows[0];
+    const currentPhysical = current.physical_quantity;
+    const currentReserved = current.reserved_quantity;
 
-    const updateResult = await InventoryRecord.updateOne(
-        guardedFilter,
-        { $inc: { physicalQuantity: physicalDelta, reservedQuantity: reservedDelta } },
-        { session }
+    // The guards decide legality and choose the error code (Req 15.5). They run against
+    // values read under the row lock, so their verdict is still true at write time.
+    assertSufficientPhysical(currentPhysical, physicalDelta);
+    assertSufficientAvailable(currentPhysical, currentReserved, physicalDelta, reservedDelta);
+
+    const nextPhysical = currentPhysical + physicalDelta;
+    const nextReserved = currentReserved + reservedDelta;
+
+    // The guard predicates are repeated in the WHERE clause as defence in depth: if a future
+    // change ever let a caller reach this line without the guards above, the database would
+    // still refuse rather than write an illegal row. Explicit target values are set (rather
+    // than `col = col + ?`) because the row lock already makes the computed values
+    // authoritative.
+    const [updateResult] = await tx.query(
+        `UPDATE inventory_records
+            SET physical_quantity = ?, reserved_quantity = ?
+          WHERE id = ? AND ? >= 0 AND ? <= ?`,
+        [nextPhysical, nextReserved, current.id, nextPhysical, nextReserved, nextPhysical]
     );
 
-    if (updateResult.matchedCount !== 1) {
-        // The update's filter is what decided this, but the JS guards -- called here rather
-        // than inlined -- pick the correct error code to report (Req 15.5).
-        assertSufficientPhysical(current.physicalQuantity, physicalDelta);
-        assertSufficientAvailable(
-            current.physicalQuantity,
-            current.reservedQuantity,
-            physicalDelta,
-            reservedDelta
-        );
-        // One of the two assertions above always throws when matchedCount !== 1, so this
-        // line is unreachable; it exists only to fail loudly if that ever stops being true.
+    // `affectedRows` counts rows CHANGED, so a movement of (0, 0) legitimately reports 0
+    // without anything being wrong. Only treat 0 as a failure when the row genuinely should
+    // have changed.
+    const shouldHaveChanged = nextPhysical !== currentPhysical || nextReserved !== currentReserved;
+    if (updateResult.affectedRows !== 1 && shouldHaveChanged) {
+        // Unreachable while the guards above are correct; kept so a future regression fails
+        // loudly rather than silently skipping the write.
         throw insufficientAvailableQuantity();
     }
 
+    // The ledger row. Its UNIQUE movement_reference is what makes a replayed or concurrent
+    // duplicate fail at the database rather than being applied twice (Req 4.5).
     try {
-        await InventoryTransaction.create(
-            [
-                {
-                    inventoryRecord: current._id,
-                    physicalDelta,
-                    reservedDelta,
-                    movementReference,
-                    appliedAt: new Date(),
-                    createdBy,
-                },
-            ],
-            { session }
+        await tx.query(
+            `INSERT INTO inventory_transactions
+                 (id, inventory_record_id, physical_delta, reserved_delta, movement_reference, created_by)
+             VALUES (?, ?, ?, ?, ?, ?)`,
+            [newId(), current.id, physicalDelta, reservedDelta, movementReference, createdBy]
         );
     } catch (error) {
-        if (error.code === 11000) {
+        if (isDuplicateKey(error)) {
             throw duplicateInventoryTransaction();
         }
         throw error;
     }
 
-    return current._id;
+    return current.id;
 }
 
+// --- writes ----------------------------------------------------------------------------
+
 /**
- * Creates an InventoryRecord with an opening balance and its opening ledger row, both inside
+ * Creates an inventory record with an opening balance and its opening ledger row, both in
  * one transaction (Req 3.10, 3.11, 4.9).
  *
  * @param {{ item: string, location: string, batch: string, physicalQuantity: number, createdBy?: string|null }} input
- * @returns {Promise<import('mongoose').Document>} the created, populated InventoryRecord
- * @throws {AppError} 400 INVALID_REFERENCE when item or location does not exist; 409
- *   DUPLICATE_INVENTORY_RECORD on an existing { item, location, batch } triple
+ * @returns {Promise<object>} the created record in the populated response shape
+ * @throws {AppError} 400 INVALID_REFERENCE; 409 DUPLICATE_INVENTORY_RECORD
  */
 async function createInventoryRecord({ item, location, batch, physicalQuantity, createdBy = null }) {
-    const [itemExists, locationExists] = await Promise.all([
-        Item.exists({ _id: item }),
-        Location.exists({ _id: location }),
-    ]);
-    if (!itemExists || !locationExists) {
-        throw invalidReference();
-    }
+    return withTransaction(async (tx) => {
+        // Existence of both references is checked explicitly so the caller gets
+        // INVALID_REFERENCE (400) rather than the foreign key's raw failure (Req 3.11).
+        const [refRows] = await tx.query(
+            `SELECT
+                 (SELECT COUNT(*) FROM items     WHERE id = ?) AS itemCount,
+                 (SELECT COUNT(*) FROM locations WHERE id = ?) AS locationCount`,
+            [item, location]
+        );
+        if (refRows[0].itemCount !== 1 || refRows[0].locationCount !== 1) {
+            throw invalidReference();
+        }
 
-    const recordId = await withTransaction(async (session) => {
-        // Generated before the insert so the opening ledger row can name this record's id
-        // inside the same transaction that creates it (Req 4.9).
-        const newRecordId = new mongoose.Types.ObjectId();
+        // The id is generated up front so the opening ledger row can reference the record
+        // and the movement reference can embed the record's own id (Req 4.9).
+        const id = newId();
 
         try {
-            await InventoryRecord.create(
-                [
-                    {
-                        _id: newRecordId,
-                        item,
-                        location,
-                        batch,
-                        physicalQuantity: 0,
-                        reservedQuantity: 0,
-                    },
-                ],
-                { session }
+            await tx.query(
+                `INSERT INTO inventory_records
+                     (id, item_id, location_id, batch, physical_quantity, reserved_quantity)
+                 VALUES (?, ?, ?, ?, ?, 0)`,
+                [id, item, location, batch, physicalQuantity]
             );
         } catch (error) {
-            if (error.code === 11000) {
+            // The UNIQUE (item_id, location_id, batch) index refused it (Req 3.7).
+            if (isDuplicateKey(error)) {
                 throw duplicateInventoryRecord();
             }
             throw error;
         }
 
-        // Routed through applyMovement rather than set on the insert above, so the opening
-        // balance and its ledger row are written the same way every later movement is (Req
-        // 4.4, 4.7, 4.9): the record starts at 0/0 and this is the first ledger-backed change.
-        await applyMovement(
-            { _id: newRecordId },
-            {
-                physicalDelta: physicalQuantity,
-                reservedDelta: 0,
-                movementReference: openingMovementReference(newRecordId),
-                createdBy,
-            },
-            session
+        // The opening balance is booked as a movement like any other, so the ledger can
+        // reconstruct physical_quantity from its deltas alone (Req 4.7, 4.9). An opening
+        // quantity of 0 still writes its row, so every record has a ledger origin.
+        await tx.query(
+            `INSERT INTO inventory_transactions
+                 (id, inventory_record_id, physical_delta, reserved_delta, movement_reference, created_by)
+             VALUES (?, ?, ?, 0, ?, ?)`,
+            [newId(), id, physicalQuantity, openingMovementReference(id), createdBy]
         );
 
-        return newRecordId;
+        return findRecordById(id, tx);
     });
-
-    return InventoryRecord.findById(recordId)
-        .populate({ path: 'item', populate: { path: 'category' } })
-        .populate('location');
 }
 
 /**
- * Applies a manual IN/OUT adjustment to an existing InventoryRecord, writing one ledger row
- * for it (Req 4.2, 4.3, 4.6).
+ * Applies an IN or OUT movement to one existing record (Req 4.2, 4.3, 4.6).
  *
  * @param {{ recordId: string, direction: 'IN'|'OUT', quantity: number, movementReference: string, createdBy?: string|null }} input
- * @returns {Promise<import('mongoose').Document>} the updated, populated InventoryRecord
- * @throws {AppError} 404 NOT_FOUND when no record matches `recordId`; 409
- *   INSUFFICIENT_PHYSICAL_QUANTITY, INSUFFICIENT_AVAILABLE_QUANTITY, or
- *   DUPLICATE_INVENTORY_TRANSACTION
+ * @returns {Promise<object>} the adjusted record in the populated response shape
  */
-async function adjustInventoryRecord({ recordId, direction, quantity, movementReference: clientRef, createdBy = null }) {
-    const updatedId = await withTransaction(async (session) => {
-        const exists = await InventoryRecord.exists({ _id: recordId }).session(session);
-        if (!exists) {
-            throw notFound();
-        }
+async function adjustInventoryRecord({
+    recordId,
+    direction,
+    quantity,
+    movementReference: clientRef,
+    createdBy = null,
+}) {
+    return withTransaction(async (tx) => {
+        // OUT is the same movement with the sign flipped, so there is one write path rather
+        // than a branch per direction.
+        const physicalDelta = direction === 'OUT' ? -quantity : quantity;
 
-        const physicalDelta = direction === 'IN' ? quantity : -quantity;
-
-        return applyMovement(
+        await applyMovement(
             recordId,
             {
                 physicalDelta,
                 reservedDelta: 0,
+                // The client's reference is namespaced with the record it targets, so the
+                // same human-supplied string stays usable against a different record while a
+                // replay against THIS record is rejected (Req 4.6).
                 movementReference: adjustMovementReference(recordId, clientRef),
                 createdBy,
             },
-            session
+            tx
         );
+
+        return findRecordById(recordId, tx);
     });
-
-    return InventoryRecord.findById(updatedId)
-        .populate({ path: 'item', populate: { path: 'category' } })
-        .populate('location');
-}
-
-/**
- * Lists InventoryRecords, optionally filtered by item and/or location, populated with enough
- * of `item` (including its `category`) and `location` for the API response shape (Req 3.2).
- *
- * @param {{ item?: string, location?: string }} [filters]
- * @returns {Promise<import('mongoose').Document[]>}
- */
-async function listInventoryRecords({ item, location } = {}) {
-    const filter = {};
-    if (item) filter.item = item;
-    if (location) filter.location = location;
-
-    return InventoryRecord.find(filter)
-        .populate({ path: 'item', populate: { path: 'category' } })
-        .populate('location');
-}
-
-/**
- * Reads the Location_Available_Quantity of one item at one location, reporting 0 when no
- * InventoryRecord exists for that pair rather than NOT_FOUND (Req 3.12).
- *
- * @param {{ item: string, location: string }} input
- * @returns {Promise<{ item: string, location: string, locationAvailableQuantity: number }>}
- * @throws {AppError} 400 INVALID_REFERENCE when item or location does not exist
- */
-async function getLocationAvailability({ item, location }) {
-    const [itemExists, locationExists] = await Promise.all([
-        Item.exists({ _id: item }),
-        Location.exists({ _id: location }),
-    ]);
-    if (!itemExists || !locationExists) {
-        throw invalidReference();
-    }
-
-    const records = await InventoryRecord.find({ item, location });
-
-    return {
-        item,
-        location,
-        locationAvailableQuantity: locationAvailableQuantity(records),
-    };
 }
 
 module.exports = {
-    applyMovement,
+    // guards, exported so tests can exercise them directly and so no caller re-implements
+    // a quantity comparison of its own (Req 15.5)
     assertSufficientPhysical,
     assertSufficientAvailable,
-    createInventoryRecord,
-    adjustInventoryRecord,
+    // the one write primitive every stock movement goes through
+    applyMovement,
+    // reads
     listInventoryRecords,
     getLocationAvailability,
+    findRecordById,
+    // writes
+    createInventoryRecord,
+    adjustInventoryRecord,
+    // shared with the other services that map MySQL duplicate-key failures
+    isDuplicateKey,
+    RECORD_SELECT,
 };
