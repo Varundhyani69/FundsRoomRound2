@@ -1,51 +1,117 @@
-// backend/src/db/connect.js -- opens the Mongoose connection and reports whether the
-// deployment is a replica set, because multi-document transactions require one (Req 8.1, 8.6).
+// backend/src/db/connect.js -- opens the MySQL pool and verifies the deployment can
+// actually do what this application needs before the port is bound (Req 8.1, 8.6).
+//
+// The MongoDB version of this file had to check for a replica set, because
+// multi-document transactions were unavailable on a standalone server. MySQL needs
+// no such deployment shape -- InnoDB gives transactions on a single ordinary server
+// -- so that entire class of setup friction is gone. What is worth checking instead
+// is that the tables are actually InnoDB: on MyISAM every BEGIN/COMMIT would be
+// silently ignored and every guarantee in this codebase would quietly evaporate.
 
-const mongoose = require('mongoose');
+const { getPool, closePool, query } = require('./pool');
+
+/** Tables whose storage engine decides whether transactions work at all. */
+const TRANSACTIONAL_TABLES = [
+    'inventory_records',
+    'inventory_transactions',
+    'internal_transfers',
+    'customer_orders',
+    'customer_order_reservations',
+];
 
 /**
- * Reports the replica-set name of the connected deployment, or null when the
- * deployment reports none (a standalone server).
+ * Reports the MySQL server version, e.g. "8.0.46".
+ * @returns {Promise<string>}
  */
-async function getReplicaSetName() {
-    const result = await mongoose.connection.db.admin().command({ hello: 1 });
-    return result && result.setName ? result.setName : null;
+async function getServerVersion() {
+    const rows = await query('SELECT VERSION() AS version');
+    return rows[0].version;
 }
 
 /**
- * Opens the Mongoose connection and logs one startup line about the replica-set state.
+ * Names any of the application's transactional tables that are not InnoDB, plus any
+ * that are missing entirely.
  *
- * @param {string} [uri] Optional connection string override. Omitted in production so
- *   the URI comes from the config module, which is the only reader of process.env
- *   (Req 10.4). The test harness passes the in-memory replica set URI.
+ * @returns {Promise<{ nonInnoDb: string[], missing: string[] }>}
  */
-async function connect(uri) {
-    // Required lazily so that supplying a URI never triggers the config loader's
-    // fail-fast environment check.
-    const mongoUri = uri || require('../config').mongoUri;
+async function checkStorageEngines() {
+    // Both columns are aliased explicitly: MySQL 8 returns information_schema
+    // column names in UPPERCASE, so reading `row.engine` off an unaliased `engine`
+    // column yields undefined and would report every table as non-InnoDB.
+    const rows = await query(
+        `SELECT table_name AS tableName, engine AS engine
+           FROM information_schema.tables
+          WHERE table_schema = DATABASE()
+            AND table_name IN (${TRANSACTIONAL_TABLES.map(() => '?').join(', ')})`,
+        TRANSACTIONAL_TABLES
+    );
 
-    await mongoose.connect(mongoUri);
+    const byName = new Map(rows.map((row) => [row.tableName, row.engine]));
 
-    const setName = await getReplicaSetName();
-    if (setName) {
-        console.log(`[db] connected; replica set "${setName}" reported, transactions available`);
-    } else {
+    return {
+        nonInnoDb: TRANSACTIONAL_TABLES.filter(
+            (name) => byName.has(name) && String(byName.get(name)).toUpperCase() !== 'INNODB'
+        ),
+        missing: TRANSACTIONAL_TABLES.filter((name) => !byName.has(name)),
+    };
+}
+
+/**
+ * Opens the pool and logs one startup line about the deployment's state.
+ *
+ * @param {object} [mysqlConfig] Optional connection settings override. Omitted in
+ *   production so the settings come from the config module, which is the only
+ *   reader of process.env (Req 10.4). The test harness passes the test database's.
+ */
+async function connect(mysqlConfig) {
+    getPool(mysqlConfig);
+
+    // A trivial round trip, so a bad host/credential fails here -- before the port
+    // is bound -- rather than on the first real request.
+    const version = await getServerVersion();
+
+    const { nonInnoDb, missing } = await checkStorageEngines();
+
+    if (missing.length === TRANSACTIONAL_TABLES.length) {
         console.warn(
-            '[db] connected; the deployment reports no replica-set name. ' +
-            'MongoDB multi-document transactions require a replica set, so every stock ' +
-            'movement will fail until the deployment is initiated as one (see README).'
+            `[db] connected to MySQL ${version}; the schema is not present. ` +
+            'Run `npm run migrate` to create it before serving requests.'
+        );
+    } else if (missing.length > 0) {
+        console.warn(
+            `[db] connected to MySQL ${version}; these tables are missing: ` +
+            `${missing.join(', ')}. Run \`npm run migrate\`.`
+        );
+    } else if (nonInnoDb.length > 0) {
+        // Worth shouting about: the application would appear to work while silently
+        // discarding every rollback.
+        console.error(
+            `[db] connected to MySQL ${version}, but these tables are NOT InnoDB: ` +
+            `${nonInnoDb.join(', ')}. Transactions are silently ignored on other ` +
+            'engines, so stock movements would not be atomic. Re-create the schema ' +
+            'with `npm run migrate`.'
+        );
+    } else {
+        console.log(
+            `[db] connected to MySQL ${version}; InnoDB confirmed, transactions available`
         );
     }
 
-    return mongoose.connection;
+    return getPool();
 }
 
 /**
- * Closes the Mongoose connection, which ends open sessions and aborts their
- * in-progress transactions (Req 8.4).
+ * Closes the pool, which ends every open connection and rolls back any transaction
+ * still in progress on them (Req 8.4).
  */
 async function disconnect() {
-    await mongoose.disconnect();
+    await closePool();
 }
 
-module.exports = { connect, disconnect, getReplicaSetName };
+module.exports = {
+    connect,
+    disconnect,
+    getServerVersion,
+    checkStorageEngines,
+    TRANSACTIONAL_TABLES,
+};

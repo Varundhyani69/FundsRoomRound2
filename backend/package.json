@@ -11,6 +11,7 @@
         "start": "node src/server.js",
         "dev": "node --watch src/server.js",
         "test": "jest --runInBand",
+        "migrate": "node scripts/migrate.js",
         "seed": "node scripts/seed.js"
     },
     "dependencies": {
