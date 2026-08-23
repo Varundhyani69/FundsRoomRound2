@@ -35,37 +35,122 @@ const MAX_PASSWORD_LENGTH = 72;
 
 // The seed dataset. Declared as plain data and resolved by business key, so adding a row is a
 // one-line edit here rather than a change to the steps below.
+
+// Four locations rather than the two a transfer strictly needs, so the Location filters and
+// pickers on the demo screens have something to choose between and a reviewer can see that
+// availability is scoped per Location rather than global (Req 3.5, 13.5).
 const SEED_LOCATIONS = [
     { code: 'WH-MAIN', name: 'Main Warehouse' },
     { code: 'WH-NORTH', name: 'North Depot' },
+    { code: 'WH-SOUTH', name: 'South Depot' },
+    { code: 'WH-EAST', name: 'East Distribution Centre' },
 ];
 
-const SEED_CATEGORIES = [{ name: 'Raw Material' }];
+// More than one category, so the Item list groups into something on screen and a category
+// filter has a second value to return.
+const SEED_CATEGORIES = [
+    { name: 'Raw Material' },
+    { name: 'Components' },
+    { name: 'Finished Goods' },
+    { name: 'Consumables' },
+];
 
+// Items spread across every seeded category, so each category resolves to at least one item
+// and no category renders as an empty group (Req 3.2).
 const SEED_ITEMS = [
     { code: 'ITM-1001', name: 'Steel Bolt M8', categoryName: 'Raw Material' },
     { code: 'ITM-1002', name: 'Steel Nut M8', categoryName: 'Raw Material' },
+    { code: 'ITM-1003', name: 'Steel Washer M8', categoryName: 'Raw Material' },
+    { code: 'ITM-2001', name: 'Hydraulic Hose 1m', categoryName: 'Components' },
+    { code: 'ITM-2002', name: 'Bearing 6204', categoryName: 'Components' },
+    { code: 'ITM-3001', name: 'Pump Assembly A1', categoryName: 'Finished Goods' },
+    { code: 'ITM-3002', name: 'Gearbox Unit G2', categoryName: 'Finished Goods' },
+    { code: 'ITM-4001', name: 'Machine Oil 5L', categoryName: 'Consumables' },
 ];
 
 // Opening stock, keyed by the same business keys as the reference data above (Req 13.5).
 // ITM-1001 at WH-MAIN carries 50 units: enough for a later Internal_Transfer to WH-NORTH and
 // enough headroom that the seeded Work_Order below can require more than 50 and show a
 // non-zero shortage. WH-NORTH starts with no record for this item on purpose, so a transfer's
-// receipt is what creates one -- exactly the case Req 6.8 covers.
+// receipt is what creates one -- exactly the case Req 6.8 covers. Neither of those two facts
+// may be disturbed by a later row, so nothing below adds a second batch of ITM-1001 at WH-MAIN
+// (availability sums across batches, which would lift it past 80 and erase the shortage) and
+// nothing below gives ITM-1001 a record at WH-NORTH.
+//
+// ITM-1002 at WH-MAIN is deliberately split across BATCH-002 and BATCH-003 (120 + 80 = 200
+// available), so the cross-batch summing rule of Req 3.5 is visible in the seeded data itself
+// rather than only in the tests.
+//
+// ITM-1001 does get a record at WH-SOUTH, which is safe: the shortage demo is scoped to
+// WH-MAIN and the transfer-receipt case to WH-NORTH, and availability never crosses Locations.
 const SEED_INVENTORY_RECORDS = [
     { itemCode: 'ITM-1001', locationCode: 'WH-MAIN', batch: 'BATCH-001', physicalQuantity: 50 },
+    { itemCode: 'ITM-1002', locationCode: 'WH-MAIN', batch: 'BATCH-002', physicalQuantity: 120 },
+    { itemCode: 'ITM-1002', locationCode: 'WH-MAIN', batch: 'BATCH-003', physicalQuantity: 80 },
+    { itemCode: 'ITM-1003', locationCode: 'WH-MAIN', batch: 'BATCH-004', physicalQuantity: 500 },
+    { itemCode: 'ITM-2001', locationCode: 'WH-MAIN', batch: 'BATCH-005', physicalQuantity: 40 },
+    { itemCode: 'ITM-2002', locationCode: 'WH-NORTH', batch: 'BATCH-006', physicalQuantity: 60 },
+    { itemCode: 'ITM-3001', locationCode: 'WH-NORTH', batch: 'BATCH-007', physicalQuantity: 12 },
+    { itemCode: 'ITM-1001', locationCode: 'WH-SOUTH', batch: 'BATCH-008', physicalQuantity: 200 },
+    { itemCode: 'ITM-3002', locationCode: 'WH-SOUTH', batch: 'BATCH-009', physicalQuantity: 6 },
+    { itemCode: 'ITM-4001', locationCode: 'WH-EAST', batch: 'BATCH-010', physicalQuantity: 300 },
+    { itemCode: 'ITM-2001', locationCode: 'WH-EAST', batch: 'BATCH-011', physicalQuantity: 25 },
 ];
 
 // A Work_Order whose requiredQuantity (80) exceeds ITM-1001's availability at WH-MAIN (50,
 // with nothing reserved), so a reviewer reading it back sees a non-zero Shortage_Quantity of
 // 30 without creating anything by hand (Req 13.5). Assigned to the seeded OperationsUser, who
 // is already tied to WH-MAIN.
+//
+// The rest of the set exists so every Shortage_Quantity state is on screen without a reviewer
+// creating anything by hand: a shortage (ITM-1001 needs 80 of 50, ITM-2001 needs 100 of 40,
+// ITM-3001 needs 20 of 12), a comfortable surplus (ITM-1002 needs 150 of 200, ITM-3002 needs 4
+// of 6), and an exact cover that lands on zero rather than merely near it (ITM-2002 needs 60 of
+// exactly 60) -- the boundary where the max(0, required - available) clamp is easiest to get
+// wrong. They also span more than one Location, so the list is not trivially all-WH-MAIN.
+//
+// Every work order at a Location other than WH-MAIN is assigned to Admin, because the seeded
+// OperationsUser is tied to WH-MAIN and an Admin is not tied to a site at all.
+//
+// Work orders carry no unique index, so the seed's idempotency check matches on
+// (item, location, assigned user, required quantity); each row below differs from every other
+// in at least one of those four, so a second run finds its own row instead of a sibling's.
 const SEED_WORK_ORDERS = [
     {
         itemCode: 'ITM-1001',
         locationCode: 'WH-MAIN',
         requiredQuantity: 80,
         assignedUserRole: 'OperationsUser',
+    },
+    {
+        itemCode: 'ITM-1002',
+        locationCode: 'WH-MAIN',
+        requiredQuantity: 150,
+        assignedUserRole: 'OperationsUser',
+    },
+    {
+        itemCode: 'ITM-2001',
+        locationCode: 'WH-MAIN',
+        requiredQuantity: 100,
+        assignedUserRole: 'OperationsUser',
+    },
+    {
+        itemCode: 'ITM-3001',
+        locationCode: 'WH-NORTH',
+        requiredQuantity: 20,
+        assignedUserRole: 'Admin',
+    },
+    {
+        itemCode: 'ITM-2002',
+        locationCode: 'WH-NORTH',
+        requiredQuantity: 60,
+        assignedUserRole: 'Admin',
+    },
+    {
+        itemCode: 'ITM-3002',
+        locationCode: 'WH-SOUTH',
+        requiredQuantity: 4,
+        assignedUserRole: 'Admin',
     },
 ];
 
@@ -158,7 +243,7 @@ async function upsert(table, keyColumns, valueColumns) {
     return rows[0].id;
 }
 
-/** Two locations, so an Internal_Transfer has a source and a destination (Req 13.5). */
+/** The seeded locations, so an Internal_Transfer has a source and a destination (Req 13.5). */
 async function seedLocations() {
     const locations = new Map();
     for (const { code, name } of SEED_LOCATIONS) {
@@ -177,7 +262,7 @@ async function seedCategories() {
     return categories;
 }
 
-/** Two items, each referencing a seeded category by id (Req 13.5, 3.2). */
+/** The seeded items, each referencing a seeded category by id (Req 13.5, 3.2). */
 async function seedItems(categories) {
     const items = new Map();
     for (const { code, name, categoryName } of SEED_ITEMS) {
