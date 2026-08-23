@@ -5,11 +5,14 @@
 const express = require('express');
 const cors = require('cors');
 
+const swaggerUi = require('swagger-ui-express');
+
 const config = require('./config');
 const requestLog = require('./middleware/requestLog');
 const notFound = require('./middleware/notFound');
 const errorHandler = require('./middleware/errorHandler');
 const apiRouter = require('./routes');
+const openapiSpec = require('./openapi');
 
 const app = express();
 
@@ -29,13 +32,22 @@ app.use(requestLog);
 //    errorHandler turns into MALFORMED_JSON (Req 9.11).
 app.use(express.json());
 
-// 4. Routes. Routers are mounted inside routes/index.js.
+// 4. API documentation, mounted OUTSIDE `/api` on purpose.
+//    Under `/api` it would become an undocumented entry in the API's own route
+//    table (the one tests/docs.test.js asserts against the spec), and it is not
+//    part of the API surface -- it describes it. Unauthenticated by design: the
+//    spec contains no data, only the shape of the API, and a reviewer needs to
+//    read it before they have a token.
+app.get('/docs.json', (req, res) => res.status(200).json(openapiSpec));
+app.use('/docs', swaggerUi.serve, swaggerUi.setup(openapiSpec));
+
+// 5. Routes. Routers are mounted inside routes/index.js.
 app.use('/api', apiRouter);
 
-// 5. No declared route matched the method and path (Req 9.12).
+// 6. No declared route matched the method and path (Req 9.12).
 app.use(notFound);
 
-// 6. LAST middleware: the one place an error becomes an HTTP response (Req 9.5).
+// 7. LAST middleware: the one place an error becomes an HTTP response (Req 9.5).
 app.use(errorHandler);
 
 module.exports = app;

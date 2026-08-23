@@ -74,10 +74,35 @@ function declaredRoutes(expressApp, stack = expressApp._router.stack, prefix = '
     });
 }
 
+/**
+ * The subset of declaredRoutes() that belongs to the API surface itself.
+ *
+ * The app also mounts documentation routes (`GET /docs.json`, and Swagger UI on
+ * `/docs`) which describe the API rather than being part of it, so they are
+ * deliberately outside `/api` and are excluded here. Anchoring on the `/api`
+ * prefix rather than on a hard-coded exclusion list means a future non-API mount
+ * needs no change to this test.
+ */
+function declaredApiRoutes(expressApp) {
+    return declaredRoutes(expressApp).filter((route) => route.split(' ')[1].startsWith('/api/'));
+}
+
 /** Every `### `METHOD /path`` heading in the doc, in the order they appear. */
 function documentedRoutes(doc) {
     const matches = [...doc.matchAll(/^### `(GET|POST|PATCH|PUT|DELETE) (\/api\/[^`]+)`$/gm)];
     return matches.map(([, method, routePath]) => `${method} ${routePath}`);
+}
+
+/**
+ * Every operation in the OpenAPI spec as a `"<METHOD> <express path>"` string.
+ * OpenAPI writes path parameters as `{id}` while Express declares them as `:id`,
+ * so the placeholders are converted before comparison.
+ */
+function specRoutes(spec) {
+    return Object.entries(spec.paths).flatMap(([specPath, operations]) => {
+        const expressPath = specPath.replace(/\{(\w+)\}/g, ':$1');
+        return Object.keys(operations).map((method) => `${method.toUpperCase()} ${expressPath}`);
+    });
 }
 
 // ---------------------------------------------------------------------------------------
@@ -128,7 +153,7 @@ function documentedEnvVars(doc) {
 
 describe('docs/api.md route table matches the declared routes (Req 13.9)', () => {
     test('every route the app declares is documented, and vice versa', () => {
-        const declared = [...new Set(declaredRoutes(app))].sort();
+        const declared = [...new Set(declaredApiRoutes(app))].sort();
         const documented = [...new Set(documentedRoutes(apiDoc))].sort();
 
         expect(documented).toEqual(declared);
@@ -137,7 +162,43 @@ describe('docs/api.md route table matches the declared routes (Req 13.9)', () =>
     // Without this, both lists being empty would also pass the assertion above.
     test('the parser and the walk each really find routes', () => {
         expect(documentedRoutes(apiDoc).length).toBeGreaterThan(0);
-        expect(declaredRoutes(app).length).toBeGreaterThan(0);
+        expect(declaredApiRoutes(app).length).toBeGreaterThan(0);
+    });
+});
+
+describe('the OpenAPI spec matches the declared routes (Req 13.3, 13.9)', () => {
+    const spec = require('../src/openapi');
+
+    test('every route the app declares has a spec operation, and vice versa', () => {
+        const declared = [...new Set(declaredApiRoutes(app))].sort();
+        const specified = [...new Set(specRoutes(spec))].sort();
+
+        expect(specified).toEqual(declared);
+    });
+
+    test('the spec walk really finds operations', () => {
+        expect(specRoutes(spec).length).toBeGreaterThan(0);
+    });
+
+    test('every error code named in the spec is a declared code', () => {
+        // The spec's Error schema enumerates the code set; it is built from
+        // ERROR_CODES, so this guards the derivation rather than a hand-typed list.
+        expect(spec.components.schemas.Error.properties.code.enum.sort()).toEqual(
+            Object.keys(ERROR_CODES).sort()
+        );
+    });
+
+    test('every operation declares at least one response', () => {
+        for (const [specPath, operations] of Object.entries(spec.paths)) {
+            for (const [method, operation] of Object.entries(operations)) {
+                expect(Object.keys(operation.responses).length).toBeGreaterThan(0);
+                // Every operation carries a summary, so Swagger UI never renders a
+                // nameless row.
+                expect(typeof operation.summary).toBe('string');
+                expect(operation.summary.length).toBeGreaterThan(0);
+                expect(`${method} ${specPath}`).toBeTruthy();
+            }
+        }
     });
 });
 
