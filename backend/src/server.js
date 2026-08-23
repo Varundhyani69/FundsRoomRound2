@@ -22,9 +22,9 @@ async function start() {
 }
 
 /**
- * Stops accepting connections, then closes the Mongoose connection, which ends
- * every open session and aborts its in-progress transaction, and exits 0. A
- * 10-second timer forces a non-zero exit if that has not completed (Req 8.4).
+ * Stops accepting connections, then closes the MySQL pool, which ends every open
+ * connection and rolls back any transaction still in progress on them, and exits 0.
+ * A 10-second timer forces a non-zero exit if that has not completed (Req 8.4).
  */
 async function shutdown(signal) {
     if (shuttingDown) {

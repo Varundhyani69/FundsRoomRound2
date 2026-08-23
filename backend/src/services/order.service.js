@@ -1,35 +1,22 @@
-// backend/src/services/order.service.js -- the Order_Service: creates Customer_Orders by
-// reserving stock out of InventoryRecord Available_Quantity, and reads them back (Req 7.1,
-// 7.2, 7.3, 7.4, 7.10, 7.12, 15.3, 15.5, 15.6).
+// backend/src/services/order.service.js -- the Order_Service: creates a Customer_Order and
+// reserves its stock across batches in one transaction (Req 7.1-7.12, 15.3, 15.5, 15.6).
 //
-// `reserveAcrossBatches` is the single most important function in this codebase. It is the
-// one place a reservation decision is made, and the decision comes from the MATCH RESULT of a
-// conditional database update, never from a value read earlier in the same function (Req 7.4,
-// 15.5). Read its comments carefully before changing it -- see "WHY THIS DEFEATS THE RACE"
-// below for the reasoning that makes concurrent reservation requests safe.
-//
-// `createOrder` runs the whole thing inside one `withTransaction` call: the reservation loop
-// and the CustomerOrder insert commit together, or neither happens (Req 8.1). Existence
-// checks for `item` and `location` happen first, the same way workOrder.service.js's
-// `createWorkOrder` and transfer.service.js's `createTransfer` check their references before
-// opening a transaction -- a request naming an unknown item or location never needs a
-// transaction at all.
+// This is the file the brief's hardest requirement lands on: two users must not be able to
+// reserve more stock than exists, and it has to be solved at the database level. See
+// `reserveAcrossBatches` below for how, and why it cannot lose the race.
 
-const mongoose = require('mongoose');
-
-const CustomerOrder = require('../models/CustomerOrder');
-const InventoryRecord = require('../models/InventoryRecord');
-const InventoryTransaction = require('../models/InventoryTransaction');
-const Item = require('../models/Item');
-const Location = require('../models/Location');
-const { withTransaction } = require('../db/withTransaction');
-const { availableQuantity, hasAvailableAtLeastExpr } = require('./availability');
-const { reserveMovementReference } = require('./movementReference');
 const AppError = require('../errors/AppError');
 const ERROR_CODES = require('../errors/errorCodes');
+const { query } = require('../db/pool');
+const { withTransaction } = require('../db/withTransaction');
+const { newId } = require('../db/id');
+const { toCustomerOrder } = require('../db/mappers');
+const { availableQuantity, hasAvailableAtLeastSql } = require('./availability');
+const { isDuplicateKey } = require('./inventory.service');
+const { reserveMovementReference } = require('./movementReference');
 
-// Built fresh per call, the same way inventory.service.js's, transfer.service.js's, and
-// workOrder.service.js's error factories are, so each thrown error carries its own stack.
+// --- error builders -------------------------------------------------------------------
+
 const invalidReference = () =>
     new AppError(
         ERROR_CODES.INVALID_REFERENCE,
@@ -44,77 +31,146 @@ const insufficientAvailableQuantity = () =>
     new AppError(
         ERROR_CODES.INSUFFICIENT_AVAILABLE_QUANTITY,
         'INSUFFICIENT_AVAILABLE_QUANTITY',
-        'Not enough available quantity to reserve this order.'
+        'There is not enough available quantity at that location for this order.'
     );
 
+// --- reads -----------------------------------------------------------------------------
+
+const ORDER_SELECT = `
+    SELECT o.id, o.customer_name, o.quantity, o.status, o.created_at, o.updated_at,
+           i.id AS item_id, i.code AS item_code, i.name AS item_name,
+           c.id AS category_id, c.name AS category_name,
+           l.id AS location_id, l.code AS location_code, l.name AS location_name
+      FROM customer_orders o
+      JOIN items i      ON i.id = o.item_id
+      JOIN categories c ON c.id = i.category_id
+      JOIN locations l  ON l.id = o.location_id`;
+
 /**
- * Populates a CustomerOrder document the same way for create, list, and get, so the response
- * shape never drifts between endpoints. `reservations` entries are left as raw `item`/
- * `location` ids, matching design.md's own API response example -- they are already scoped
- * to a batch of the order's own item and location, so re-populating them here would only
- * repeat information already on the parent document (Req 15.3).
+ * Loads the reservation lines of one or more orders, keyed by order id.
  *
- * @param {import('mongoose').Query} query
- * @returns {import('mongoose').Query}
+ * Fetched in a single query for every order in the list rather than one query per order,
+ * because the alternative is the classic N+1: a list of 50 orders would otherwise issue 51
+ * round trips. Ordered by batch so the lines come back in the ascending order they were
+ * consumed in (Req 15.6).
+ *
+ * @param {string[]} orderIds
+ * @returns {Promise<Map<string, object[]>>}
  */
-function populateOrder(query) {
-    return query
-        .populate({ path: 'item', populate: { path: 'category' } })
-        .populate('location');
+async function loadReservations(orderIds) {
+    const byOrder = new Map(orderIds.map((id) => [id, []]));
+    if (orderIds.length === 0) {
+        return byOrder;
+    }
+
+    const rows = await query(
+        `SELECT customer_order_id, item_id, location_id, batch, quantity
+           FROM customer_order_reservations
+          WHERE customer_order_id IN (${orderIds.map(() => '?').join(', ')})
+          ORDER BY batch`,
+        orderIds
+    );
+
+    for (const row of rows) {
+        byOrder.get(row.customer_order_id).push(row);
+    }
+    return byOrder;
+}
+
+/** Reads one order with its reservation lines, or null when absent. */
+async function findOrderById(id) {
+    const rows = await query(`${ORDER_SELECT} WHERE o.id = ?`, [id]);
+    if (rows.length === 0) {
+        return null;
+    }
+    const reservations = await loadReservations([id]);
+    return toCustomerOrder(rows[0], reservations.get(id));
 }
 
 /**
- * Reserves `quantity` units of one Item at one Location by increasing the Reserved_Quantity
- * of its InventoryRecord documents in ascending Batch order, consuming each record's full
- * Available_Quantity before moving to the next (Req 7.1).
+ * Lists Customer_Orders, optionally filtered by status, each with its reservation lines.
  *
- * THE DECISION, NOT THE READ (Req 7.4, 15.5): the `records` read below only picks candidate
- * batches and a `take` size to attempt. It never decides whether the reservation succeeds.
- * The decision is `result.matchedCount === 1` on a conditional update whose filter re-checks
- * availability at the instant MongoDB applies it. If the filter no longer matches -- because
- * another transaction reserved from the same record in between this function's read and its
- * write -- the update matches nothing and this throws immediately. Nothing here ever compares
- * a remembered availability number against `take` to make the accept/reject call; the update
- * result is the call.
- *
- * WHY THIS DEFEATS THE RACE: take Available_Quantity 100, with two overlapping requests, A
- * reserving 80 and B reserving 50, both inside their own `withTransaction` callback.
- *
- *   A naive read-then-write implementation would have both requests read 100, both conclude
- *   "80 (or 50) fits", both `$inc` reservedQuantity, and the record would end up with
- *   Reserved_Quantity 130 against Physical_Quantity 100 -- an oversell (Req 7.6).
- *
- *   Here, both transactions attempt to `updateOne` the SAME InventoryRecord document at
- *   roughly the same time. MongoDB's transaction machinery lets one of the two writes
- *   proceed and fails the other with a write conflict, surfaced as a
- *   `TransientTransactionError`. The loser's whole transaction aborts -- nothing it wrote
- *   persists, including any earlier reservations it may have made against other batches.
- *
- *   `withTransaction` then retries the loser: a fresh session re-runs this function from its
- *   first read. This time the read sees the winner's committed Reserved_Quantity increase, so
- *   `take = min(remaining, availableQuantity(record))` is smaller (or the record has nothing
- *   left at all), and either the `hasAvailableAtLeastExpr(take)` filter fails to match on the
- *   very next attempt, or `remaining > 0` once every record has been scanned. Either path
- *   throws `INSUFFICIENT_AVAILABLE_QUANTITY`, and the loser's request is rejected with 409
- *   while the winner's Customer_Order commits (Req 7.5, 7.6, 7.7).
- *
- *   So of the two concurrently submitted requests, at most one ever sees its conditional
- *   update match while the sum of what both ask for exceeds availability, because the second
- *   one to actually apply its update is, by construction, evaluated against the state the
- *   first one already left behind -- never against a number read before either wrote
- *   anything.
- *
- * @param {{ item: string, location: string, quantity: number, orderId: import('mongoose').Types.ObjectId }} input
- * @param {import('mongoose').ClientSession} session the caller's transaction session
- * @returns {Promise<Array<{ item: string, location: string, batch: string, quantity: number }>>}
- *   the Reservation_Entry list; its quantities sum to `quantity` (Req 15.3, 15.6)
- * @throws {AppError} 409 INSUFFICIENT_AVAILABLE_QUANTITY when a conditional update misses, or
- *   when the location's total availability falls short of `quantity`
+ * @param {{ status?: string }} [filters]
+ * @returns {Promise<object[]>}
  */
-async function reserveAcrossBatches({ item, location, quantity, orderId }, session) {
-    const records = await InventoryRecord.find({ item, location })
-        .sort({ batch: 1 }) // ascending batch order (Req 7.1)
-        .session(session);
+async function listOrders({ status } = {}) {
+    const where = status ? ' WHERE o.status = ?' : '';
+    const params = status ? [status] : [];
+    const rows = await query(`${ORDER_SELECT}${where} ORDER BY o.created_at DESC, o.id`, params);
+
+    const reservations = await loadReservations(rows.map((row) => row.id));
+    return rows.map((row) => toCustomerOrder(row, reservations.get(row.id)));
+}
+
+/**
+ * Reads one Customer_Order (Req 7.12).
+ *
+ * @param {string} id
+ * @throws {AppError} 404 NOT_FOUND
+ */
+async function getOrder(id) {
+    const order = await findOrderById(id);
+    if (!order) {
+        throw notFound();
+    }
+    return order;
+}
+
+// --- the reservation ---------------------------------------------------------------------
+
+/**
+ * Reserves `quantity` units of one Item at one Location by increasing the reserved_quantity of
+ * its inventory_records in ascending batch order, consuming each record's full availability
+ * before moving to the next (Req 7.1).
+ *
+ * THE DATABASE DECIDES, NOT THE READ (Req 7.4, 15.5). Two mechanisms do the work:
+ *
+ *   1. `SELECT ... FOR UPDATE` on the candidate rows. InnoDB holds those row locks until this
+ *      transaction commits, so a second transaction reserving from the same batch BLOCKS here
+ *      rather than reading a value that is about to go stale.
+ *
+ *   2. The `UPDATE ... WHERE (physical_quantity - reserved_quantity) >= ?` predicate, from
+ *      availability.js. Availability is re-evaluated by MySQL at the moment the write applies.
+ *      The accept/reject decision is `affectedRows === 1` -- never a JS comparison against a
+ *      number read earlier.
+ *
+ * WHY THIS DEFEATS THE BRIEF'S RACE: availability 100, request A reserving 80 and request B
+ * reserving 50, submitted together.
+ *
+ *   A naive read-then-write would have both read 100, both conclude their amount fits, both
+ *   increment, and leave reserved_quantity 130 against physical_quantity 100 -- an oversell.
+ *
+ *   Here, whichever transaction reaches the FOR UPDATE first holds the row lock. The other
+ *   waits. When the winner commits, the loser acquires the lock and re-reads
+ *   reserved_quantity as 80, so its `take` is recomputed against 20 available, its predicate
+ *   `20 >= 50` fails, `affectedRows` is 0, and it throws INSUFFICIENT_AVAILABLE_QUANTITY. Its
+ *   whole transaction rolls back, so any partial reservation it had already made against an
+ *   earlier batch is undone too.
+ *
+ *   If the two instead deadlock, MySQL rolls one back with ER_LOCK_DEADLOCK, which
+ *   src/db/withTransaction.js treats as transient and retries from the first read -- where it
+ *   then sees the winner's committed effect and is rejected on the merits.
+ *
+ *   Either way exactly one of the two commits, and reserved_quantity never exceeds
+ *   physical_quantity -- a bound the schema's CHECK constraint also enforces independently
+ *   (Req 7.5, 7.6, 7.7).
+ *
+ * @param {{ item: string, location: string, quantity: number, orderId: string, createdBy?: string|null }} input
+ * @param {import('mysql2/promise').PoolConnection} tx the caller's transaction connection
+ * @returns {Promise<Array<{ item: string, location: string, batch: string, quantity: number }>>}
+ *   the reservation lines; their quantities sum to `quantity` (Req 15.3, 15.6)
+ * @throws {AppError} 409 INSUFFICIENT_AVAILABLE_QUANTITY
+ */
+async function reserveAcrossBatches({ item, location, quantity, orderId, createdBy = null }, tx) {
+    // Ascending batch order (Req 7.1, 15.6), locked for the duration of this transaction.
+    const [records] = await tx.query(
+        `SELECT id, batch, physical_quantity, reserved_quantity
+           FROM inventory_records
+          WHERE item_id = ? AND location_id = ?
+          ORDER BY batch
+          FOR UPDATE`,
+        [item, location]
+    );
 
     let remaining = quantity;
     const entries = [];
@@ -122,53 +178,62 @@ async function reserveAcrossBatches({ item, location, quantity, orderId }, sessi
     for (const record of records) {
         if (remaining === 0) break;
 
-        // A candidate size only -- picking this does not reserve anything by itself.
-        const take = Math.min(remaining, availableQuantity(record));
+        // A candidate size only -- choosing this reserves nothing by itself.
+        const take = Math.min(
+            remaining,
+            availableQuantity({
+                physicalQuantity: record.physical_quantity,
+                reservedQuantity: record.reserved_quantity,
+            })
+        );
         if (take <= 0) continue;
 
-        // The availability condition lives in the FILTER, evaluated by MongoDB at update
-        // time against whatever the document currently holds, not in a JS comparison against
-        // the `record` read above (Req 7.4).
-        const result = await InventoryRecord.updateOne(
-            {
-                _id: record._id,
-                ...hasAvailableAtLeastExpr(take),
-            },
-            { $inc: { reservedQuantity: take } },
-            { session }
+        // The availability condition lives in the WHERE clause, evaluated by MySQL as it
+        // applies the write (Req 7.4). Built by availability.js so the formula is not
+        // restated here (Req 15.1).
+        const guard = hasAvailableAtLeastSql(take);
+        const [result] = await tx.query(
+            `UPDATE inventory_records
+                SET reserved_quantity = reserved_quantity + ?
+              WHERE id = ? AND ${guard.sql}`,
+            [take, record.id, ...guard.params]
         );
 
-        if (result.matchedCount !== 1) {
-            // Availability disappeared between the read above and this update. The match
-            // result IS the decision (Req 7.4) -- there is nothing left to double-check.
+        if (result.affectedRows !== 1) {
+            // Availability disappeared between the read and this write. The write's own
+            // result IS the decision (Req 7.4) -- there is nothing left to re-check.
             throw insufficientAvailableQuantity();
         }
 
-        // One ledger row per changed record, inside the same transaction as the update it
-        // describes, the same discipline applyMovement enforces for every other mutation
-        // path (Req 4.4, 8.1). Not routed through applyMovement itself: this update's guard
-        // is reservedQuantity-only (Req 7.4), not applyMovement's combined physical+available
-        // guard, so it is written directly here per design.md's own pattern.
-        await InventoryTransaction.create(
-            [
-                {
-                    inventoryRecord: record._id,
-                    physicalDelta: 0,
-                    reservedDelta: take,
-                    movementReference: reserveMovementReference(orderId, record._id),
-                    appliedAt: new Date(),
-                },
-            ],
-            { session }
-        );
+        // One ledger row per changed record, in the same transaction as the update it
+        // describes -- the same discipline applyMovement enforces everywhere else
+        // (Req 4.4, 8.1). Written directly rather than through applyMovement because this
+        // update's guard is reserved-only (Req 7.4), not applyMovement's combined
+        // physical-and-available guard.
+        try {
+            await tx.query(
+                `INSERT INTO inventory_transactions
+                     (id, inventory_record_id, physical_delta, reserved_delta,
+                      movement_reference, created_by)
+                 VALUES (?, ?, 0, ?, ?, ?)`,
+                [newId(), record.id, take, reserveMovementReference(orderId, record.id), createdBy]
+            );
+        } catch (error) {
+            // The same order reserving the same record twice would mean this function ran
+            // twice for one order id, which the unique movement_reference refuses.
+            if (isDuplicateKey(error)) {
+                throw insufficientAvailableQuantity();
+            }
+            throw error;
+        }
 
         entries.push({ item, location, batch: record.batch, quantity: take });
         remaining -= take;
     }
 
     if (remaining > 0) {
-        // Not enough total Available_Quantity across every batch at this location, even
-        // though every individual update attempted above matched (Req 7.3).
+        // Not enough total availability across every batch at this location, even though each
+        // individual update that was attempted matched (Req 7.3).
         throw insufficientAvailableQuantity();
     }
 
@@ -176,90 +241,65 @@ async function reserveAcrossBatches({ item, location, quantity, orderId }, sessi
 }
 
 /**
- * Creates a Customer_Order: reserves `quantity` units of `item` at `location` across
- * batches, then creates the order with Customer_Order_Status `Reserved` and the resulting
- * Reservation_Entry list, all inside one transaction (Req 7.1, 8.1).
+ * Creates a Customer_Order and reserves its stock, both in one transaction (Req 7.1).
  *
- * @param {{ customerName: string, item: string, location: string, quantity: number, createdBy: string }} input
- * @returns {Promise<import('mongoose').Document>} the created, populated CustomerOrder
- * @throws {AppError} 400 INVALID_REFERENCE when item or location does not exist; 409
- *   INSUFFICIENT_AVAILABLE_QUANTITY when the requested quantity cannot be fully reserved
+ * Either the order row, every reservation line, every reserved_quantity increase, and every
+ * ledger row all commit, or none of them do: a rejected reservation leaves no order behind
+ * (Req 7.3, 8.2).
+ *
+ * @param {{ customerName: string, item: string, location: string, quantity: number, createdBy?: string|null }} input
+ * @returns {Promise<object>} the created order with its reservation lines
+ * @throws {AppError} 400 INVALID_REFERENCE; 409 INSUFFICIENT_AVAILABLE_QUANTITY
  */
-async function createOrder({ customerName, item, location, quantity, createdBy }) {
-    const [itemExists, locationExists] = await Promise.all([
-        Item.exists({ _id: item }),
-        Location.exists({ _id: location }),
-    ]);
-    if (!itemExists || !locationExists) {
-        throw invalidReference();
-    }
+async function createOrder({ customerName, item, location, quantity, createdBy = null }) {
+    const orderId = await withTransaction(async (tx) => {
+        const [refRows] = await tx.query(
+            `SELECT
+                 (SELECT COUNT(*) FROM items     WHERE id = ?) AS itemCount,
+                 (SELECT COUNT(*) FROM locations WHERE id = ?) AS locationCount`,
+            [item, location]
+        );
+        if (refRows[0].itemCount !== 1 || refRows[0].locationCount !== 1) {
+            throw invalidReference();
+        }
 
-    const orderId = await withTransaction(async (session) => {
-        // Generated before the insert so reserveAcrossBatches can compose a movement
-        // reference naming this order's id before the CustomerOrder document itself exists,
-        // the same pre-generated-id pattern createInventoryRecord and receiveTransfer use for
-        // their own opening/receipt ledger rows (Req 4.9 style consistency).
-        const newOrderId = new mongoose.Types.ObjectId();
+        // Generated up front so the reservation lines and their ledger rows can all name the
+        // order inside this one transaction.
+        const id = newId();
 
-        const reservations = await reserveAcrossBatches(
-            { item, location, quantity, orderId: newOrderId },
-            session
+        await tx.query(
+            `INSERT INTO customer_orders
+                 (id, customer_name, item_id, location_id, quantity, status, created_by)
+             VALUES (?, ?, ?, ?, ?, 'Reserved', ?)`,
+            [id, customerName, item, location, quantity, createdBy]
         );
 
-        await CustomerOrder.create(
-            [
-                {
-                    _id: newOrderId,
-                    customerName,
-                    item,
-                    location,
-                    quantity,
-                    status: 'Reserved',
-                    reservations,
-                    createdBy,
-                },
-            ],
-            { session }
+        // Throws before any of the above is visible if the stock is not there (Req 7.3).
+        const entries = await reserveAcrossBatches(
+            { item, location, quantity, orderId: id, createdBy },
+            tx
         );
 
-        return newOrderId;
+        for (const entry of entries) {
+            await tx.query(
+                `INSERT INTO customer_order_reservations
+                     (id, customer_order_id, item_id, location_id, batch, quantity)
+                 VALUES (?, ?, ?, ?, ?, ?)`,
+                [newId(), id, entry.item, entry.location, entry.batch, entry.quantity]
+            );
+        }
+
+        return id;
     });
 
-    return populateOrder(CustomerOrder.findById(orderId));
-}
-
-/**
- * Lists CustomerOrders, optionally filtered by status, populated with enough of `item`
- * (including its `category`) and `location` for the API response shape (Req 3.2).
- *
- * @param {{ status?: string }} [filters]
- * @returns {Promise<import('mongoose').Document[]>}
- */
-async function listOrders({ status } = {}) {
-    const filter = {};
-    if (status) filter.status = status;
-
-    return populateOrder(CustomerOrder.find(filter));
-}
-
-/**
- * Reads one Customer_Order.
- *
- * @param {string} id
- * @returns {Promise<import('mongoose').Document>} the populated CustomerOrder
- * @throws {AppError} 404 NOT_FOUND when no Customer_Order matches `id`
- */
-async function getOrder(id) {
-    const order = await populateOrder(CustomerOrder.findById(id));
-    if (!order) {
-        throw notFound();
-    }
-    return order;
+    return findOrderById(orderId);
 }
 
 module.exports = {
-    reserveAcrossBatches,
     createOrder,
     listOrders,
     getOrder,
+    findOrderById,
+    reserveAcrossBatches,
+    ORDER_SELECT,
 };

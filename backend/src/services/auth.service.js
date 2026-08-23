@@ -10,7 +10,7 @@ const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 
 const config = require('../config');
-const User = require('../models/User');
+const { query } = require('../db/pool');
 const AppError = require('../errors/AppError');
 
 // Cost factor 10, inside the required 10..12 band (Req 1.5).
@@ -58,16 +58,23 @@ function hashPassword(plain) {
 async function login(email, password) {
     const normalizedEmail = String(email).trim().toLowerCase();
 
-    // `passwordHash` is `select: false` on the schema, so the one query that needs it asks
-    // for it explicitly.
-    const user = await User.findOne({ email: normalizedEmail }).select('+passwordHash');
+    // password_hash is named explicitly here. It is the ONLY query in the codebase that
+    // selects it -- every other read of `users` lists id, email and role -- so the hash
+    // cannot leak into a response by accident (Req 1.1).
+    const rows = await query(
+        `SELECT id, email, password_hash, role, assigned_location_id
+           FROM users WHERE email = ?`,
+        [normalizedEmail]
+    );
 
-    if (!user) {
+    if (rows.length === 0) {
         await bcrypt.compare(password, DUMMY_PASSWORD_HASH);
         throw invalidCredentials(); // Req 1.2
     }
 
-    const matches = await bcrypt.compare(password, user.passwordHash);
+    const user = rows[0];
+
+    const matches = await bcrypt.compare(password, user.password_hash);
     if (!matches) {
         throw invalidCredentials(); // Req 1.3 -- identical to the branch above (Req 1.4)
     }
@@ -80,7 +87,7 @@ async function login(email, password) {
         { expiresIn: TOKEN_TTL }
     );
 
-    // Built field by field rather than from the document, so the hash cannot reach the
+    // Built field by field rather than by spreading the row, so the hash cannot reach the
     // response body (Req 1.1).
     return {
         token,
@@ -88,9 +95,7 @@ async function login(email, password) {
             id: user.id,
             email: user.email,
             role: user.role,
-            assignedLocation: user.assignedLocation
-                ? String(user.assignedLocation)
-                : null,
+            assignedLocation: user.assigned_location_id || null,
         },
     };
 }

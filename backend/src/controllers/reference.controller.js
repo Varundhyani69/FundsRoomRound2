@@ -1,21 +1,19 @@
 // backend/src/controllers/reference.controller.js
-// The three read-only reference lists the Web_Client needs to fill its form
-// dropdowns: Items with their Category, Locations, and Users (Req 3.2).
+// The three read-only reference lists the Web_Client needs to fill its form dropdowns: Items
+// with their Category, Locations, and Users (Req 3.2).
 //
-// These handlers read their models directly, and that is deliberate: the
-// responsibility table in design.md keeps model access out of controllers because
-// controllers must not hold business rules, and the design lists no
-// reference.service.js. There is no rule to hold here -- no quantity comparison,
-// no status transition, no transaction -- only "list the documents and shape
-// them". A service layer whose every function were `Model.find()` would add a file
-// without adding a decision. Anything that grows a guard moves to a service.
+// These handlers query directly rather than through a service, and that is deliberate: the
+// responsibility split in design.md keeps data access out of controllers because controllers
+// must not hold business rules, and there is no rule to hold here -- no quantity comparison,
+// no status transition, no transaction. Only "list the rows and shape them". A service whose
+// every function were a single SELECT would add a file without adding a decision. Anything
+// that grows a guard moves to a service.
 //
-// Each list is sorted by the field a person would scan the dropdown by, so the
-// order the client renders is stable across calls rather than insertion order.
+// Each list is sorted by the field a person would scan the dropdown by, so the order the
+// client renders is stable across calls rather than whatever order the storage engine returns.
 
-const Item = require('../models/Item');
-const Location = require('../models/Location');
-const User = require('../models/User');
+const { query } = require('../db/pool');
+const { toUserRef } = require('../db/mappers');
 
 /**
  * GET /api/items
@@ -24,20 +22,29 @@ const User = require('../models/User');
  */
 async function listItems(req, res, next) {
     try {
-        // The Category is stored as an ObjectId reference, never as an embedded copy
-        // (Req 3.2), so the name the dropdown shows is populated at read time. Only
-        // `name` is selected: the client needs the id to submit and the name to
-        // display, nothing else.
-        const items = await Item.find()
-            .populate('category', 'name')
-            .sort({ code: 1 })
-            .lean();
+        // The category name is JOINed rather than duplicated onto the item row, because the
+        // category is a separate entity referenced by id (Req 3.2) -- so renaming a category
+        // is one UPDATE and every item picks it up.
+        const rows = await query(
+            `SELECT i.id, i.code, i.name,
+                    c.id AS category_id, c.name AS category_name
+               FROM items i
+               JOIN categories c ON c.id = i.category_id
+              ORDER BY i.code`
+        );
 
-        return res.status(200).json(items.map(toItemResponse));
+        return res.status(200).json(
+            rows.map((row) => ({
+                id: row.id,
+                code: row.code,
+                name: row.name,
+                category: { id: row.category_id, name: row.category_name },
+            }))
+        );
     } catch (error) {
-        // Express 4 does not observe a rejected promise, so the error is handed to
-        // next() explicitly: errorHandler stays the only place that writes an error
-        // response (Req 9.5).
+        // Express 4 does not observe a rejected promise, so the error is handed to next()
+        // explicitly: errorHandler stays the only place that writes an error response
+        // (Req 9.5).
         return next(error);
     }
 }
@@ -49,14 +56,9 @@ async function listItems(req, res, next) {
  */
 async function listLocations(req, res, next) {
     try {
-        const locations = await Location.find().sort({ code: 1 }).lean();
-
+        const rows = await query('SELECT id, code, name FROM locations ORDER BY code');
         return res.status(200).json(
-            locations.map((location) => ({
-                id: String(location._id),
-                code: location.code,
-                name: location.name,
-            }))
+            rows.map((row) => ({ id: row.id, code: row.code, name: row.name }))
         );
     } catch (error) {
         return next(error);
@@ -68,42 +70,22 @@ async function listLocations(req, res, next) {
  * 200 [{ id, email, role }]
  * 401 UNAUTHENTICATED
  *
- * This is the list a Work_Order form assigns from, so it exposes exactly the three
- * fields that form needs. `passwordHash` carries `select: false` in the schema, so
- * it is already absent; the explicit `.select()` says so at the call site too, and
- * means a field added to the User schema later cannot appear in this response by
- * accident (Req 1.1).
+ * This is the list a Work_Order form assigns from, so it selects exactly the three columns
+ * that form needs. `password_hash` is named in one query in the whole codebase -- the login
+ * lookup -- and listing the columns explicitly here rather than using `SELECT *` means a
+ * column added to `users` later cannot appear in this response by accident (Req 1.1).
  */
 async function listUsers(req, res, next) {
     try {
-        const users = await User.find().select('email role').sort({ email: 1 }).lean();
-
-        return res.status(200).json(
-            users.map((user) => ({
-                id: String(user._id),
-                email: user.email,
-                role: user.role,
-            }))
-        );
+        const rows = await query('SELECT id, email, role FROM users ORDER BY email');
+        return res.status(200).json(rows.map(toUserRef).map((user) => ({
+            id: user._id,
+            email: user.email,
+            role: user.role,
+        })));
     } catch (error) {
         return next(error);
     }
-}
-
-/**
- * One lean Item document becomes one response entry. `category` is null only if the
- * referenced Category no longer exists, in which case populate() leaves the field
- * empty; the list still renders rather than throwing on a missing name.
- */
-function toItemResponse(item) {
-    return {
-        id: String(item._id),
-        code: item.code,
-        name: item.name,
-        category: item.category
-            ? { id: String(item.category._id), name: item.category.name }
-            : null,
-    };
 }
 
 module.exports = { listItems, listLocations, listUsers };
