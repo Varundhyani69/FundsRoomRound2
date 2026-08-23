@@ -406,66 +406,66 @@ Scope discipline: no file, function, or abstraction beyond what design.md names.
     - **Property 16: Authentication and role enforcement hold across the route table**
     - **Validates: Requirements 1.2, 1.3, 1.4, 1.7, 1.8, 1.9, 1.11, 2.1, 2.2, 2.3, 2.4, 2.5, 2.6, 2.7, 2.12, 2.13**
 
-  - [-] 9.9 Run the suite, commit, and push increment 9
+  - [x] 9.9 Run the suite, commit, and push increment 9
     - Run `npm test`; commit only on exit 0
     - `git commit -m "Add concurrency and transaction hardening tests with retry bounds"`, then `git push`
     - _Requirements: 14.1, 14.2, 14.7_
 
 - [ ] 10. Frontend: five screens wired to the API
-  - [ ] 10.1 Scaffold the Vite React app
+  - [x] 10.1 Scaffold the Vite React app
     - `frontend/package.json` (react, react-dom, react-router-dom; dev: vite, @vitejs/plugin-react, vitest, @testing-library/react, @testing-library/jest-dom, jsdom), `frontend/vite.config.js` that throws when `VITE_API_BASE_URL` is absent, empty, or whitespace, `frontend/index.html`, `frontend/src/main.jsx`, `frontend/.env.example`
     - _Requirements: 10.8, 10.11_
 
-  - [ ] 10.2 Implement the API client
+  - [x] 10.2 Implement the API client
     - `frontend/src/api/client.js` — base URL from `import.meta.env.VITE_API_BASE_URL` with no fallback, Bearer header from stored token, global 401 handling that clears the session and signals a session-ended redirect, `ApiError` carrying `code` and `message` for every other non-2xx response
     - _Requirements: 10.8, 11.3, 11.4, 11.12_
 
-  - [ ] 10.3 Implement the auth context and route guard
+  - [x] 10.3 Implement the auth context and route guard
     - `frontend/src/auth/AuthContext.jsx` — `{ token, user, login, logout }` persisted in localStorage under one key, `login` posting to `/api/auth/login` and navigating to Inventory
     - `frontend/src/components/RequireAuth.jsx` — renders the Login screen and issues no API request when no token is held
     - _Requirements: 11.2, 11.4, 11.17, 2.10_
 
-  - [ ] 10.4 Wire the router, navigation, and the mirrored permission map
+  - [x] 10.4 Wire the router, navigation, and the mirrored permission map
     - `frontend/src/App.jsx` — exactly five screen routes and a catch-all redirect, no sixth screen
     - `frontend/src/auth/permissions.js` — the write-route-to-role constant mirroring `backend/src/permissions.js`, plus `canWrite(routeKey, role)`
     - `frontend/src/components/Nav.jsx` — navigation entries hidden when the session role is not permitted, nothing rendered before login
     - _Requirements: 2.9, 2.10, 11.1_
 
-  - [ ] 10.5 Build the Login screen
+  - [x] 10.5 Build the Login screen
     - `frontend/src/screens/LoginScreen.jsx` — submits credentials, retains the email value on rejection, shows a credentials-rejected message, stores nothing on failure, disables the submit control while the request is in flight
     - _Requirements: 11.2, 11.13, 11.16_
 
-  - [ ] 10.6 Build the Inventory screen and shared display components
+  - [x] 10.6 Build the Inventory screen and shared display components
     - `frontend/src/components/DataTable.jsx`, `ErrorBanner.jsx`, `EmptyState.jsx`
     - `frontend/src/screens/InventoryScreen.jsx` — lists item, category, location, batch, physical, reserved, and available quantity taken from the API response
     - _Requirements: 11.5, 11.12, 11.15_
 
-  - [ ] 10.7 Build the Work Orders screen
+  - [x] 10.7 Build the Work Orders screen
     - `frontend/src/screens/WorkOrdersScreen.jsx` — lists id, location, item, required quantity, assigned user, status, shortage; Admin-only creation form; status-change control gated by the mirrored map; refetch after a successful write
     - _Requirements: 11.6, 11.7, 11.13, 11.14_
 
-  - [ ] 10.8 Build the Internal Transfers screen
+  - [x] 10.8 Build the Internal Transfers screen
     - `frontend/src/screens/TransfersScreen.jsx` — lists id, source, destination, item, batch, quantity, status; dispatch control only on `Requested` rows and receipt control only on `Dispatched` rows for Admin/OperationsUser, neither on `Received` rows; refetch after a successful write
     - _Requirements: 11.8, 11.9, 11.13, 11.14_
 
-  - [ ] 10.9 Build the Customer Orders screen
+  - [x] 10.9 Build the Customer Orders screen
     - `frontend/src/screens/CustomerOrdersScreen.jsx` — lists customer name, item, location, quantity, status; creation form rendered on this screen only and only for SalesUser/Admin; refetch after a successful write
     - _Requirements: 11.10, 11.11, 11.13, 11.14_
 
-  - [ ] 10.10 Set up the frontend test runner
+  - [x] 10.10 Set up the frontend test runner
     - `frontend/vitest.config.js` (jsdom environment), `frontend/src/test/setup.js` (jest-dom matchers), a mocked API client module, and the `test` script in `frontend/package.json`
     - _Requirements: 11.1_
 
-  - [ ]* 10.11 Write component tests for the five screens
+  - [x]* 10.11 Write component tests for the five screens
     - `frontend/src/screens/*.test.jsx` — rendered columns per screen, role gating of forms and row controls, empty-state message, disabled-while-busy control, login failure retaining the email
     - _Requirements: 11.1, 11.5, 11.6, 11.7, 11.8, 11.9, 11.10, 11.11, 11.13, 11.15, 11.16_
 
-  - [ ]* 10.12 Write property test for the API client contract
+  - [x]* 10.12 Write property test for the API client contract
     - `frontend/src/api/client.test.js`
     - **Property 19: The client attaches the token and reacts to every 401**
     - **Validates: Requirements 11.3, 11.4, 11.12, 11.14**
 
-  - [ ] 10.13 Run both suites, commit, and push increment 10
+  - [-] 10.13 Run both suites, commit, and push increment 10
     - Run `npm test` in `backend/` and `npm test` in `frontend/`; commit only when both exit 0
     - `git commit -m "Add React frontend with five screens and role-gated controls"`, then `git push`
     - _Requirements: 14.1, 14.2, 14.3, 14.7_
