@@ -370,17 +370,17 @@ Scope discipline: no file, function, or abstraction beyond what design.md names.
     - `git commit -m "Add customer orders with ascending-batch stock reservation"`, then `git push`
     - _Requirements: 14.1, 14.2, 14.7_
 
-- [ ] 9. Concurrency and transaction hardening
-  - [ ] 9.1 Harden retry and session hygiene
+- [x] 9. Concurrency and transaction hardening
+  - [x] 9.1 Harden retry and session hygiene
     - Review `backend/src/db/withTransaction.js` against the retry rule: fresh session per attempt so a retry re-runs from the first read, swallowed abort errors, `endSession()` on every exit path, `CONCURRENT_MODIFICATION` after the fourth attempt
     - Add `backend/tests/setup/sessionCount.js` — reads the server's open session count so tests can compare before and after a request
     - _Requirements: 8.2, 8.3, 8.5_
 
-  - [ ] 9.2 Write the concurrency tests
+  - [x] 9.2 Write the concurrency tests
     - `backend/tests/concurrency.test.js` — availability 100 with unawaited orders of 80 and 50 via `Promise.allSettled`: exactly one 201, one 409 `INSUFFICIENT_AVAILABLE_QUANTITY`, exactly one order document, reserved up by exactly the committed quantity; plus two unawaited receipts for one transfer: exactly one commit, the other 409 `TRANSFER_ALREADY_RECEIVED`
     - _Requirements: 6.16, 7.5, 7.6, 7.7, 12.6, 12.13_
 
-  - [ ]* 9.3 Write unit tests for transaction behaviour
+  - [x]* 9.3 Write unit tests for transaction behaviour
     - `backend/tests/transactions.test.js` — rollback totality on an injected mid-transaction failure, open session count returning to baseline, retry count and `CONCURRENT_MODIFICATION` at exhaustion, and a graceful shutdown smoke test
     - _Requirements: 8.2, 8.3, 8.4, 8.5, 8.8_
 
@@ -411,7 +411,7 @@ Scope discipline: no file, function, or abstraction beyond what design.md names.
     - `git commit -m "Add concurrency and transaction hardening tests with retry bounds"`, then `git push`
     - _Requirements: 14.1, 14.2, 14.7_
 
-- [ ] 10. Frontend: five screens wired to the API
+- [x] 10. Frontend: five screens wired to the API
   - [x] 10.1 Scaffold the Vite React app
     - `frontend/package.json` (react, react-dom, react-router-dom; dev: vite, @vitejs/plugin-react, vitest, @testing-library/react, @testing-library/jest-dom, jsdom), `frontend/vite.config.js` that throws when `VITE_API_BASE_URL` is absent, empty, or whitespace, `frontend/index.html`, `frontend/src/main.jsx`, `frontend/.env.example`
     - _Requirements: 10.8, 10.11_
@@ -465,31 +465,31 @@ Scope discipline: no file, function, or abstraction beyond what design.md names.
     - **Property 19: The client attaches the token and reacts to every 401**
     - **Validates: Requirements 11.3, 11.4, 11.12, 11.14**
 
-  - [-] 10.13 Run both suites, commit, and push increment 10
+  - [x] 10.13 Run both suites, commit, and push increment 10
     - Run `npm test` in `backend/` and `npm test` in `frontend/`; commit only when both exit 0
     - `git commit -m "Add React frontend with five screens and role-gated controls"`, then `git push`
     - _Requirements: 14.1, 14.2, 14.3, 14.7_
 
 - [ ] 11. Documentation set
-  - [ ] 11.1 Write the README
+  - [x] 11.1 Write the README
     - `README.md` — tech stack, minimum Node.js and MongoDB versions, numbered setup steps, database setup including the `rs.initiate()` replica-set step, the full environment variable table with purpose/required/range/non-credential example, the verbatim commands to run the API server, the web client, the seed script, and the test suite, the seeded user emails with their roles and the environment variable supplying each password, the replica-set reason and the 3-retry limit, and links to the other documents
     - _Requirements: 8.6, 10.7, 13.1, 13.5, 13.7, 13.8_
 
-  - [ ] 11.2 Write the database schema document with the ER diagram source
+  - [x] 11.2 Write the database schema document with the ER diagram source
     - `docs/database-schema.md` — every collection with each field, its type, and whether it is required or optional, every reference field with its target collection, and every unique index
     - `docs/er-diagram.mmd` — the tracked Mermaid ER diagram source, embedded by reference in the schema document
     - _Requirements: 13.2_
 
-  - [ ] 11.3 Write the API documentation
+  - [x] 11.3 Write the API documentation
     - `docs/api.md` — for every route: method, path, permitted role set, request schema, success response schema with status, every error code with its HTTP status, and one example request body and success response; plus the complete error code list and the exact required environment variable list
     - _Requirements: 13.3, 13.9_
 
-  - [ ] 11.4 Write the deviation and extensibility documents
+  - [x] 11.4 Write the deviation and extensibility documents
     - `docs/mongodb-deviation.md` — MongoDB replacing the relational database of the brief, how ObjectId references and multi-document transactions preserve its intent, and the accepted trade-offs (application-enforced referential integrity, replica-set requirement)
     - `docs/extensibility.md` — for each of adding a damaged quantity, partial transfer receipt, cancelling an order and releasing its reservation, and restricting a user to their assigned location: the module, the named function, and the schema fields to edit
     - _Requirements: 13.4, 15.7_
 
-  - [ ]* 11.5 Write a documentation consistency test
+  - [x]* 11.5 Write a documentation consistency test
     - `backend/tests/docs.test.js` — asserts that the route table in `docs/api.md` matches the routes the app declares, that its error code list matches the keys of `src/errors/errorCodes.js`, and that its environment variable list matches the required set in `src/config/index.js`
     - _Requirements: 13.9_
 

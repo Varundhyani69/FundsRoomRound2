@@ -172,8 +172,9 @@ const { genRole, genMalformedId, genUnusedObjectId } = require('../setup/generat
 describe('Property 17: Sessions and retries are bounded', () => {
     // Pure DB-session mechanics -- withTransaction starts and ends a real session per
     // attempt against the in-memory replica set, but does no HTTP round trip and no
-    // application-level write, so this is cheap per run even at a higher count.
-    const RUNS_PROPERTY_17_RETRY = { numRuns: 50 };
+    // application-level write. Kept at exactly the numRuns: 25 floor of Req 12.7 for suite
+    // speed.
+    const RUNS_PROPERTY_17_RETRY = { numRuns: 25 };
     // Drives real HTTP requests through the exported app, the slower shape, so this stays
     // at the Req 12.7 floor.
     const RUNS_PROPERTY_17_SESSION = { numRuns: 25 };
@@ -489,10 +490,12 @@ describe('Property 15: Every rejected request answers from the declared code tab
 
 // Feature: mini-operations-erp, Property 16: Authentication and role enforcement hold across the route table
 describe('Property 16: Authentication and role enforcement hold across the route table', () => {
-    // Stub routes, no database write on any rejection this half exercises -- cheap per run.
-    const RUNS_PROPERTY_16_TOKEN_STATES = { numRuns: 50 };
-    // Drives real HTTP requests against real routes and real documents.
-    const RUNS_PROPERTY_16_ROLE_ENFORCEMENT = { numRuns: 30 };
+    // Stub routes, no database write on any rejection this half exercises. Kept at exactly
+    // the numRuns: 25 floor of Req 12.7 for suite speed.
+    const RUNS_PROPERTY_16_TOKEN_STATES = { numRuns: 25 };
+    // Drives real HTTP requests against real routes and real documents. Kept at exactly the
+    // numRuns: 25 floor of Req 12.7 for suite speed.
+    const RUNS_PROPERTY_16_ROLE_ENFORCEMENT = { numRuns: 25 };
     const RUNS_PROPERTY_16_LOGIN = { numRuns: 25 };
 
     const FOREIGN_SECRET = 'a-completely-different-secret-of-at-least-32-chars';

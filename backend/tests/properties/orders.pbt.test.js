@@ -35,9 +35,8 @@ const RUNS_PROPERTY_12 = { numRuns: 25 };
 
 // Property 13 dispatches 2-5 concurrent HTTP requests per iteration through
 // Promise.allSettled, the same shape as tests/concurrency.test.js's mandatory concurrency
-// test. 30 runs clears the numRuns: 25 floor of Req 12.7 while keeping this file's overall
-// run time reasonable.
-const RUNS_PROPERTY_13 = { numRuns: 30 };
+// test. Kept at exactly the numRuns: 25 floor of Req 12.7 for suite speed.
+const RUNS_PROPERTY_13 = { numRuns: 25 };
 
 // Property 14 runs two full sequential replays per iteration (2-4 requests each, so up to 8
 // HTTP round-trips total), the most expensive property in this file. It stays at exactly

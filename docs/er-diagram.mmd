@@ -1,0 +1,95 @@
+erDiagram
+    CATEGORY ||--o{ ITEM : classifies
+    ITEM ||--o{ INVENTORY_RECORD : "stocked as"
+    LOCATION ||--o{ INVENTORY_RECORD : holds
+    INVENTORY_RECORD ||--o{ INVENTORY_TRANSACTION : "ledger rows"
+    USER ||--o{ INVENTORY_TRANSACTION : "createdBy (nullable)"
+    LOCATION ||--o{ USER : "assignedLocation (nullable)"
+    USER ||--o{ WORK_ORDER : "assignedUser"
+    USER ||--o{ WORK_ORDER : "createdBy"
+    ITEM ||--o{ WORK_ORDER : requires
+    LOCATION ||--o{ WORK_ORDER : "performed at"
+    ITEM ||--o{ INTERNAL_TRANSFER : moves
+    LOCATION ||--o{ INTERNAL_TRANSFER : "sourceLocation"
+    LOCATION ||--o{ INTERNAL_TRANSFER : "destinationLocation"
+    ITEM ||--o{ CUSTOMER_ORDER : ordered
+    LOCATION ||--o{ CUSTOMER_ORDER : "fulfilled from"
+    USER ||--o{ CUSTOMER_ORDER : "createdBy"
+    CUSTOMER_ORDER ||--|{ RESERVATION_ENTRY : "reserves via"
+
+    CATEGORY {
+        string _id PK
+        string name UK
+    }
+    ITEM {
+        string _id PK
+        string code UK
+        string name
+        objectId category FK
+    }
+    LOCATION {
+        string _id PK
+        string code UK
+        string name
+    }
+    USER {
+        string _id PK
+        string email UK
+        string passwordHash
+        string role
+        objectId assignedLocation FK
+    }
+    INVENTORY_RECORD {
+        string _id PK
+        objectId item FK
+        objectId location FK
+        string batch
+        int physicalQuantity
+        int reservedQuantity
+    }
+    INVENTORY_TRANSACTION {
+        string _id PK
+        objectId inventoryRecord FK
+        int physicalDelta
+        int reservedDelta
+        string movementReference UK
+        date appliedAt
+        objectId createdBy FK
+    }
+    WORK_ORDER {
+        string _id PK
+        objectId location FK
+        objectId item FK
+        int requiredQuantity
+        objectId assignedUser FK
+        string status
+        date statusChangedAt
+        objectId createdBy FK
+    }
+    INTERNAL_TRANSFER {
+        string _id PK
+        objectId item FK
+        string batch
+        objectId sourceLocation FK
+        objectId destinationLocation FK
+        int quantity
+        int receivedQuantity
+        string status
+        date dispatchedAt
+        date receivedAt
+    }
+    CUSTOMER_ORDER {
+        string _id PK
+        string customerName
+        objectId item FK
+        objectId location FK
+        int quantity
+        string status
+        objectId createdBy FK
+    }
+    RESERVATION_ENTRY {
+        objectId item FK
+        objectId location FK
+        string batch
+        int quantity
+    }
