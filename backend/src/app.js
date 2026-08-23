@@ -5,8 +5,6 @@
 const express = require('express');
 const cors = require('cors');
 
-const swaggerUi = require('swagger-ui-express');
-
 const config = require('./config');
 const requestLog = require('./middleware/requestLog');
 const notFound = require('./middleware/notFound');
@@ -40,14 +38,18 @@ app.use(express.json());
 app.get('/health', health.liveness);
 app.get('/health/ready', health.readiness);
 
-// 5. API documentation, mounted OUTSIDE `/api` on purpose.
-//    Under `/api` it would become an undocumented entry in the API's own route
-//    table (the one tests/docs.test.js asserts against the spec), and it is not
-//    part of the API surface -- it describes it. Unauthenticated by design: the
-//    spec contains no data, only the shape of the API, and a reviewer needs to
-//    read it before they have a token.
+// 5. API documentation: the OpenAPI document as raw JSON, and nothing else.
+//    No HTML UI is mounted any more. The spec is the machine-readable artifact --
+//    a reviewer imports this URL straight into Postman or Insomnia, and
+//    scripts/postman.js derives the tracked Postman collection from the same
+//    module -- so shipping a browser UI (and the dependency behind it) bought
+//    nothing the JSON does not already give.
+//    Still mounted OUTSIDE `/api` on purpose: under `/api` it would become an
+//    undocumented entry in the API's own route table (the one tests/docs.test.js
+//    asserts against the spec), and it is not part of the API surface -- it
+//    describes it. Unauthenticated by design: the spec contains no data, only the
+//    shape of the API, and a reviewer needs to read it before they have a token.
 app.get('/docs.json', (req, res) => res.status(200).json(openapiSpec));
-app.use('/docs', swaggerUi.serve, swaggerUi.setup(openapiSpec));
 
 // 6. Routes. Routers are mounted inside routes/index.js.
 app.use('/api', apiRouter);

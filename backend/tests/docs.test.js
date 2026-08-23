@@ -77,9 +77,9 @@ function declaredRoutes(expressApp, stack = expressApp._router.stack, prefix = '
 /**
  * The subset of declaredRoutes() that belongs to the API surface itself.
  *
- * The app also mounts documentation routes (`GET /docs.json`, and Swagger UI on
- * `/docs`) which describe the API rather than being part of it, so they are
- * deliberately outside `/api` and are excluded here. Anchoring on the `/api`
+ * The app also mounts a documentation route (`GET /docs.json`) and the health
+ * probes, which describe or operate the API rather than being part of it, so they
+ * are deliberately outside `/api` and are excluded here. Anchoring on the `/api`
  * prefix rather than on a hard-coded exclusion list means a future non-API mount
  * needs no change to this test.
  */
@@ -192,8 +192,9 @@ describe('the OpenAPI spec matches the declared routes (Req 13.3, 13.9)', () => 
         for (const [specPath, operations] of Object.entries(spec.paths)) {
             for (const [method, operation] of Object.entries(operations)) {
                 expect(Object.keys(operation.responses).length).toBeGreaterThan(0);
-                // Every operation carries a summary, so Swagger UI never renders a
-                // nameless row.
+                // Every operation carries a summary: scripts/postman.js names each
+                // generated request after it, so a missing one would emit a
+                // nameless request in the collection.
                 expect(typeof operation.summary).toBe('string');
                 expect(operation.summary.length).toBeGreaterThan(0);
                 expect(`${method} ${specPath}`).toBeTruthy();

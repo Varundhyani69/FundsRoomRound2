@@ -1,7 +1,8 @@
-// backend/src/openapi.js -- the OpenAPI 3.0 description of the API, served as
-// interactive Swagger UI at GET /docs and as raw JSON at GET /docs.json
-// (see src/app.js). This is the "Swagger, Postman or equivalent" artifact the
-// case study brief asks for; docs/api.md remains the prose reference.
+// backend/src/openapi.js -- the OpenAPI 3.0 description of the API, served as raw
+// JSON at GET /docs.json and nowhere else (see src/app.js), and read by
+// scripts/postman.js to derive the tracked Postman collection under postman/.
+// This is the machine-readable API-description artifact the case study brief asks
+// for (spec plus generated collection); docs/api.md remains the prose reference.
 //
 // Two parts of this document are DERIVED rather than typed out, so they cannot
 // drift from the code they describe:

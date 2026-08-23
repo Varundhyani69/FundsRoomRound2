@@ -4,9 +4,30 @@ A small operations ERP covering the flow **Inventory → Work Order → Stock Ch
 
 The data lives in MySQL 8 with a fully normalised relational schema: ten tables, twenty foreign keys, and the business invariants declared as `CHECK` constraints and `UNIQUE` indexes so the database refuses illegal data even if application code were bypassed. Every multi-step stock movement runs inside one InnoDB transaction. Queries are hand-written SQL through `mysql2` rather than an ORM, so what runs against the database is exactly what is in the source. See [`docs/database-schema.md`](docs/database-schema.md) for the schema and [`docs/data-integrity.md`](docs/data-integrity.md) for how the invariants and the concurrency guarantees are enforced.
 
+## Live demo
+
+A review instance is running:
+
+- **Web client:** http://34.239.240.245:5173
+- **API base URL:** http://34.239.240.245:4000
+- **Raw OpenAPI spec:** http://34.239.240.245:4000/docs.json
+- **Health probe:** http://34.239.240.245:4000/health/ready
+
+Sign in with any of the three seeded roles:
+
+| Email | Password | Role |
+|---|---|---|
+| `admin@mini-erp.local` | `AdminDemo2026` | Admin |
+| `operations@mini-erp.local` | `OpsDemo2026` | OperationsUser |
+| `sales@mini-erp.local` | `SalesDemo2026` | SalesUser |
+
+It runs via Docker Compose on a single EC2 instance and is a throwaway review deployment seeded with sample data, so the credentials above are deliberately public and it holds nothing real.
+
+The public IP is not an Elastic IP, so it changes if the instance is restarted.
+
 ## Tech stack
 
-- **Backend:** Node.js, Express, MySQL 8 (via `mysql2`, hand-written SQL — no ORM) — `bcryptjs` for password hashing, `jsonwebtoken` for auth tokens, `zod` for validation, `cors`, `dotenv`, `swagger-ui-express` for the API docs
+- **Backend:** Node.js, Express, MySQL 8 (via `mysql2`, hand-written SQL — no ORM) — `bcryptjs` for password hashing, `jsonwebtoken` for auth tokens, `zod` for validation, `cors`, `dotenv`. The API surface is published as an OpenAPI 3.0.3 spec with a generated Postman collection
 - **Frontend:** Vite + React (React Router)
 - **Language:** plain JavaScript everywhere, no TypeScript
 - **Backend tests:** Jest + Supertest + fast-check for property-based tests, run against a throwaway MySQL database the suite creates and drops itself
@@ -136,14 +157,20 @@ Run the frontend test suite (in `frontend/`):
 npm test
 ```
 
-## 5. Interactive API docs
+## 5. Postman collection and OpenAPI spec
 
-With the API server running, the OpenAPI 3.0.3 specification is served as Swagger UI:
+Import these two tracked files into Postman (**Import → Files**):
 
-- **`http://localhost:4000/docs`** — browsable Swagger UI, with every route's parameters, request body, responses, and error codes. Use the login route to get a token, then paste it into **Authorize** to call the authenticated routes from the browser.
-- **`http://localhost:4000/docs.json`** — the raw specification, if you would rather import it into Postman or Insomnia.
+- [`postman/mini-operations-erp.postman_collection.json`](postman/mini-operations-erp.postman_collection.json) — every route, grouped in folders, with a pre-filled JSON body where one is needed and the permitted roles in each request's description
+- [`postman/mini-operations-erp.postman_environment.json`](postman/mini-operations-erp.postman_environment.json) — `baseUrl` and `token`, so the same collection can be pointed at localhost or at the [live demo](#live-demo) by switching environment
 
-The spec is built in `backend/src/openapi.js` from the same sources the server uses at runtime: permitted roles come from `permissions.js` and error codes from `errorCodes.js`, so they cannot drift. `backend/tests/docs.test.js` asserts the documented paths and methods match the routes actually mounted on the Express router.
+Send the login request first. Its test script reads the JWT out of the response and stores it in the `token` collection variable, and every other request already sends `Authorization: Bearer {{token}}` — so after one login the whole collection is authenticated with no copy-paste.
+
+With the API server running, **`http://localhost:4000/docs.json`** still serves the raw OpenAPI 3.0.3 specification. That URL can be imported straight into Postman or Insomnia as an alternative to the collection above.
+
+The collection is regenerated with `npm run postman` in `backend/` and is derived from `backend/src/openapi.js`, which `backend/tests/docs.test.js` asserts against the real Express router — so a route the collection is missing, or one it invents, fails the test suite.
+
+That spec is in turn built from the same sources the server uses at runtime: permitted roles come from `permissions.js` and error codes from `errorCodes.js`, so they cannot drift from the behaviour they describe.
 
 [`docs/api.md`](docs/api.md) covers the same surface in prose, with request and response examples.
 
