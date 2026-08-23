@@ -85,6 +85,33 @@ function loadConfig(env = process.env) {
         );
     }
 
+    // MYSQL_SSL is OPTIONAL, and the only optional variable this loader reads. It
+    // stays out of the required set on purpose: a local MySQL server speaks plain
+    // TCP, so demanding it would break the default development setup and the test
+    // harness. Every managed host (Aiven, PlanetScale, RDS with TLS enforced)
+    // requires TLS, which is what this exists for.
+    //
+    // Read here rather than in db/pool.js because this module is the only one
+    // permitted to touch process.env (Req 10.4), and tests/config.test.js asserts
+    // exactly that.
+    //
+    // Two accepted values, and the difference matters:
+    //   MYSQL_SSL=true            verify the server certificate (use this)
+    //   MYSQL_SSL=no-verify       encrypt but do NOT verify the certificate
+    // `no-verify` still encrypts the connection but accepts any certificate, so it
+    // gives no protection against an active man-in-the-middle. It exists only for a
+    // host that presents a self-signed certificate and offers no CA bundle; treat
+    // needing it as a problem to fix rather than a setting to keep.
+    const mysqlSslValue = typeof env.MYSQL_SSL === 'string' ? env.MYSQL_SSL.trim() : '';
+    let mysqlSsl = null;
+    if (mysqlSslValue === 'true') {
+        mysqlSsl = { minVersion: 'TLSv1.2', rejectUnauthorized: true };
+    } else if (mysqlSslValue === 'no-verify') {
+        mysqlSsl = { minVersion: 'TLSv1.2', rejectUnauthorized: false };
+    } else if (mysqlSslValue !== '') {
+        errors.push("MYSQL_SSL, when set, must be either 'true' or 'no-verify'");
+    }
+
     if (errors.length > 0) {
         return { ok: false, errors };
     }
@@ -100,6 +127,11 @@ function loadConfig(env = process.env) {
                 user: env.MYSQL_USER,
                 password: env.MYSQL_PASSWORD,
                 database: env.MYSQL_DATABASE,
+                // Only present when MYSQL_SSL is set, because mysql2 treats the
+                // `ssl` key as "use TLS" by its mere presence -- an explicit
+                // `ssl: undefined` would be read as a request for TLS with default
+                // options and break a plain local connection.
+                ...(mysqlSsl ? { ssl: mysqlSsl } : {}),
             },
             jwtSecret: env.JWT_SECRET,
             port,

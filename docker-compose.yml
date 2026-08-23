@@ -1,0 +1,110 @@
+# docker-compose.yml -- the whole stack on one machine: MySQL, the API, the SPA.
+#
+# Purpose: prove both images work together before any of it reaches AWS. If
+# `docker compose up` gives you a working login and a visible inventory list, the
+# images are sound and anything that then fails on AWS is networking or
+# configuration, not the containers. That is worth an hour of not guessing.
+#
+#   cp .env.docker.example .env.docker    # then fill in the values
+#   docker compose up --build
+#   docker compose exec backend npm run seed
+#   open http://localhost:5173
+#
+# On AWS the MySQL service below is replaced by RDS and this file is not used;
+# see DEPLOYMENT.md.
+
+services:
+  # -------------------------------------------------------------------------------
+  # MySQL 8. Local only -- RDS replaces this in any real deployment.
+  # -------------------------------------------------------------------------------
+  mysql:
+    # 8.0 rather than `latest`: the schema needs 8.0.16+ for CHECK constraints to be
+    # enforced rather than parsed and ignored, and pinning the major version stops a
+    # surprise 9.x from changing authentication or collation behaviour under you.
+    image: mysql:8.0
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_PASSWORD}
+      # Creates the database on first boot. `npm run migrate` also creates it if
+      # absent, so this is belt-and-braces rather than load-bearing.
+      MYSQL_DATABASE: ${MYSQL_DATABASE}
+    # Case-SENSITIVE collation, matching src/db/schema.sql. The schema sets it per
+    # table so this is not strictly required, but it means anything created outside
+    # the schema file (an ad-hoc table while debugging) behaves the same way, and
+    # `batch-a` stays distinct from `BATCH-A`.
+    command: >-
+      --character-set-server=utf8mb4
+      --collation-server=utf8mb4_0900_as_cs
+    healthcheck:
+      # `mysqladmin ping` succeeds once the server accepts authenticated
+      # connections, not merely once the port is open -- which is the distinction
+      # that makes `depends_on: service_healthy` below actually mean something.
+      test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1", "-p${MYSQL_PASSWORD}"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 30s
+    volumes:
+      # Named volume, so stopping the stack does not destroy the data. Remove it
+      # with `docker compose down -v` when you want a genuinely clean database.
+      - mysql-data:/var/lib/mysql
+    # Not published to the host by default. Uncomment only if you want to attach a
+    # SQL client -- an exposed database port is the kind of thing that gets left on.
+    # ports:
+    #   - "3306:3306"
+
+  # -------------------------------------------------------------------------------
+  # The API server
+  # -------------------------------------------------------------------------------
+  backend:
+    build:
+      context: ./backend
+    restart: unless-stopped
+    env_file:
+      # Supplies the eight required variables plus the three SEED_* passwords. The
+      # config loader exits non-zero naming any that are missing, so a wrong file
+      # here fails immediately and says what is wrong.
+      - .env.docker
+    environment:
+      # Overrides whatever .env.docker says for the host: inside the Compose network
+      # the database is reachable at the service name, not at 127.0.0.1. This is the
+      # single most common cause of "it works with npm start but not in Docker" --
+      # localhost inside a container is the container itself.
+      MYSQL_HOST: mysql
+      MYSQL_PORT: "3306"
+    depends_on:
+      mysql:
+        # Waits for the healthcheck above, not merely for the container to exist.
+        # scripts/docker-start.js retries on top of this anyway, so a slow first boot
+        # is survivable either way.
+        condition: service_healthy
+    ports:
+      # Published because the browser talks to the API directly at
+      # VITE_API_BASE_URL=http://localhost:4000 -- the request comes from the host's
+      # browser, not from inside the Compose network.
+      - "4000:4000"
+
+  # -------------------------------------------------------------------------------
+  # The Web_Client
+  # -------------------------------------------------------------------------------
+  frontend:
+    build:
+      context: ./frontend
+      args:
+        # BUILD-time, not runtime: Vite substitutes this into the bundle. Changing it
+        # requires `docker compose build frontend`, not just a restart. It must be the
+        # URL the BROWSER can reach -- http://localhost:4000, never http://backend:4000,
+        # which resolves only inside the Compose network.
+        VITE_API_BASE_URL: ${VITE_API_BASE_URL}
+    restart: unless-stopped
+    ports:
+      # 5173 on the host to match the Vite dev-server port the project's CORS_ORIGIN
+      # already expects, so the same .env value works for `npm run dev` and for Compose.
+      - "5173:80"
+    depends_on:
+      # Ordering only. nginx serves static files and needs nothing from the API to
+      # start; the browser makes the API calls, and it will retry when you reload.
+      - backend
+
+volumes:
+  mysql-data:

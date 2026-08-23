@@ -13,6 +13,7 @@ const notFound = require('./middleware/notFound');
 const errorHandler = require('./middleware/errorHandler');
 const apiRouter = require('./routes');
 const openapiSpec = require('./openapi');
+const health = require('./health');
 
 const app = express();
 
@@ -32,7 +33,14 @@ app.use(requestLog);
 //    errorHandler turns into MALFORMED_JSON (Req 9.11).
 app.use(express.json());
 
-// 4. API documentation, mounted OUTSIDE `/api` on purpose.
+// 4. Health probes, mounted OUTSIDE `/api` and ahead of everything expensive.
+//    A load balancer polls these every few seconds and holds no token, so they
+//    are unauthenticated and return nothing about the data -- see src/health.js
+//    for why liveness and readiness are two separate endpoints.
+app.get('/health', health.liveness);
+app.get('/health/ready', health.readiness);
+
+// 5. API documentation, mounted OUTSIDE `/api` on purpose.
 //    Under `/api` it would become an undocumented entry in the API's own route
 //    table (the one tests/docs.test.js asserts against the spec), and it is not
 //    part of the API surface -- it describes it. Unauthenticated by design: the
@@ -41,13 +49,13 @@ app.use(express.json());
 app.get('/docs.json', (req, res) => res.status(200).json(openapiSpec));
 app.use('/docs', swaggerUi.serve, swaggerUi.setup(openapiSpec));
 
-// 5. Routes. Routers are mounted inside routes/index.js.
+// 6. Routes. Routers are mounted inside routes/index.js.
 app.use('/api', apiRouter);
 
-// 6. No declared route matched the method and path (Req 9.12).
+// 7. No declared route matched the method and path (Req 9.12).
 app.use(notFound);
 
-// 7. LAST middleware: the one place an error becomes an HTTP response (Req 9.5).
+// 8. LAST middleware: the one place an error becomes an HTTP response (Req 9.5).
 app.use(errorHandler);
 
 module.exports = app;

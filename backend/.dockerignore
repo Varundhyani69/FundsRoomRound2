@@ -1,0 +1,36 @@
+# backend/.dockerignore -- what never enters the build context.
+#
+# This matters for more than image size. Everything listed here would otherwise be
+# readable inside the image, and `.env` holds real credentials.
+
+# Installed inside the image by `npm ci` against the lockfile. Copying a host
+# node_modules in would also risk carrying platform-specific artifacts from Windows
+# into a Linux image.
+node_modules
+npm-debug.log*
+
+# SECRETS. .env holds real MySQL credentials, the JWT signing secret, and the three
+# seed passwords. It must never be in an image layer -- configuration is injected as
+# environment variables at run time instead. .env.example is excluded too: it is
+# documentation, and the container has no reader for it.
+.env
+.env.*
+
+# The test suite is not run inside this image, and shipping it would put the test
+# harness's generated environment file (tests/setup/.test-env.json) in the image.
+tests
+jest.config.js
+
+# Build and run output
+*.log
+coverage
+dist
+
+# Repository and editor noise that has no meaning inside a container
+.git
+.gitignore
+.vscode
+.kiro
+Dockerfile
+.dockerignore
+README.md

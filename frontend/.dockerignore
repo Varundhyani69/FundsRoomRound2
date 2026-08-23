@@ -1,0 +1,31 @@
+# frontend/.dockerignore -- what never enters the build context.
+
+# Installed inside the image by `npm ci`. Copying a host node_modules in would also
+# carry Windows-specific artifacts into a Linux build.
+node_modules
+npm-debug.log*
+
+# SECRETS, and a correctness trap. If .env reached the build context, Vite's loadEnv
+# would read VITE_API_BASE_URL from it and silently override the --build-arg -- so
+# an image built for production could ship pointing at http://localhost:4000. The
+# build argument must be the only source of that value.
+.env
+.env.*
+
+# Rebuilt inside the image. A stale host dist/ would otherwise be copied in and then
+# overwritten, wasting a layer.
+dist
+
+# Tests do not run in this image
+**/*.test.jsx
+**/*.test.js
+vitest.config.js
+coverage
+
+# Repository and editor noise
+.git
+.gitignore
+.vscode
+.kiro
+Dockerfile
+.dockerignore
