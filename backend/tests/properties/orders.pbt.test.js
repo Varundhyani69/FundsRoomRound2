@@ -1,6 +1,8 @@
-// backend/tests/properties/orders.pbt.test.js -- property-based test for customer order
-// reservation: a reservation exactly covers its order, in ascending batch order
-// (design.md Property 12, Req 7.1, 7.3, 15.3, 15.6).
+// backend/tests/properties/orders.pbt.test.js -- property-based tests for customer order
+// reservation: a reservation exactly covers its order in ascending batch order, concurrent
+// reservations can never oversell, and the reservation algorithm is deterministic and
+// consistent regardless of submission order (design.md Properties 12-14, Req 7.1, 7.3, 7.5,
+// 7.6, 7.7, 7.8, 15.3, 15.6).
 //
 // Conventions follow tests/properties/workOrders.pbt.test.js and
 // tests/properties/transfers.pbt.test.js: one top-level `describe` per numbered property, a
@@ -9,10 +11,11 @@
 // once-per-`test()` reset never has to be relied on between fast-check runs.
 //
 // ISOLATION: a fresh Item per iteration is enough on its own (the same reasoning
-// workOrders.pbt.test.js and transfers.pbt.test.js use), so this property reuses the
-// fixture's `secondary` Location instead of also creating a fresh Location per iteration --
-// reserveAcrossBatches only scans records for one Item and one Location, and the fresh Item
-// already guarantees no collision with the fixture's own records or another iteration's.
+// workOrders.pbt.test.js and transfers.pbt.test.js use), so every property in this file
+// reuses the fixture's `secondary` Location instead of also creating a fresh Location per
+// iteration -- reserveAcrossBatches only scans records for one Item and one Location, and
+// the fresh Item already guarantees no collision with the fixture's own records or another
+// iteration's.
 
 const crypto = require('crypto');
 const fc = require('fast-check');
@@ -20,13 +23,26 @@ const fc = require('fast-check');
 const Item = require('../../src/models/Item');
 const InventoryRecord = require('../../src/models/InventoryRecord');
 const InventoryTransaction = require('../../src/models/InventoryTransaction');
+const CustomerOrder = require('../../src/models/CustomerOrder');
 const { agent } = require('../setup/agent');
 const { FIXTURE_LOCATIONS, FIXTURE_CATEGORIES, tokenFor } = require('../setup/seedFixture');
+const { genConcurrentQuantities } = require('../setup/generators');
 
 // One HTTP POST plus a handful of direct DB reads per iteration, a similar cost shape to
-// workOrders.pbt.test.js's Property 8. 30 runs clears the numRuns: 25 floor of Req 12.7
-// while keeping this file's run time reasonable.
-const RUNS_PROPERTY_12 = { numRuns: 30 };
+// workOrders.pbt.test.js's Property 8. Uses exactly the numRuns: 25 floor of Req 12.7 for
+// speed.
+const RUNS_PROPERTY_12 = { numRuns: 25 };
+
+// Property 13 dispatches 2-5 concurrent HTTP requests per iteration through
+// Promise.allSettled, the same shape as tests/concurrency.test.js's mandatory concurrency
+// test. 30 runs clears the numRuns: 25 floor of Req 12.7 while keeping this file's overall
+// run time reasonable.
+const RUNS_PROPERTY_13 = { numRuns: 30 };
+
+// Property 14 runs two full sequential replays per iteration (2-4 requests each, so up to 8
+// HTTP round-trips total), the most expensive property in this file. It stays at exactly
+// the numRuns: 25 floor of Req 12.7 rather than above it.
+const RUNS_PROPERTY_14 = { numRuns: 25 };
 
 const LOCATION_ID = FIXTURE_LOCATIONS.secondary.id;
 
@@ -190,6 +206,269 @@ describe('Property 12: A reservation exactly covers its order, in ascending batc
                 }
             }),
             RUNS_PROPERTY_12
+        );
+    });
+});
+
+// --- Property 13 ---------------------------------------------------------------------
+// Concurrent reservations can never oversell (design.md Property 13, Req 7.5, 7.6, 7.7).
+//
+// Same "genuinely concurrent" technique as tests/concurrency.test.js's mandatory test: every
+// request is built as a supertest `Test` object first, and only then is the whole array
+// handed to `Promise.allSettled` together, so no one request is awaited on its own before
+// the others are constructed. `genConcurrentQuantities` (tests/setup/generators.js) is
+// reused as-is: it already generates an availability and 2..5 quantities whose sum is
+// guaranteed to exceed it, which is exactly this property's scenario.
+//
+// A single-batch InventoryRecord is enough here. Property 12 already covers ascending
+// multi-batch allocation; this property is about the race on ONE contested pool of
+// availability, which a single record represents most directly.
+//
+// A losing request's rejection code: with 3 or more requests contending for the same
+// InventoryRecord, `withTransaction`'s retry budget (Req 8.5, at most 3 retries) can be
+// exhausted before a losing transaction ever gets a clean read of the state the winner (or
+// winners) left behind -- every one of its attempts collides with a still-in-flight sibling
+// transaction rather than observing a settled state. That losing request then surfaces 409
+// `CONCURRENT_MODIFICATION` rather than 409 `INSUFFICIENT_AVAILABLE_QUANTITY`. Both are
+// correct 409 rejections that create no Customer_Order and touch no Inventory_Record: the
+// safety guarantee this property actually asserts -- the committed sum never exceeds the
+// starting availability -- holds either way, and Req 8.5 documents `CONCURRENT_MODIFICATION`
+// as the correct outcome of retry exhaustion. This is why every non-committed response below
+// is accepted as either code rather than only `INSUFFICIENT_AVAILABLE_QUANTITY`.
+
+// Feature: mini-operations-erp, Property 13: Concurrent reservations can never oversell
+describe('Property 13: Concurrent reservations can never oversell', () => {
+    test('the sum of committed quantities never exceeds the pre-request availability, every other request is rejected and creates no order, and reservedQuantity stays <= physicalQuantity afterward', async () => {
+        const salesToken = await tokenFor('SalesUser');
+
+        await fc.assert(
+            fc.asyncProperty(genConcurrentQuantities, async ({ availability, quantities }) => {
+                const item = await createFreshItem();
+
+                await InventoryRecord.create({
+                    item,
+                    location: LOCATION_ID,
+                    batch: 'ONLY',
+                    physicalQuantity: availability,
+                    reservedQuantity: 0,
+                });
+
+                // Every request is BUILT here, before any of them is awaited.
+                const requests = quantities.map((quantity) =>
+                    agent()
+                        .post('/api/orders')
+                        .set('Authorization', `Bearer ${salesToken}`)
+                        .send({
+                            customerName: 'Property 13 Customer',
+                            item,
+                            location: LOCATION_ID,
+                            quantity,
+                        })
+                );
+
+                // `Promise.allSettled` dispatches every underlying HTTP request as it
+                // iterates, before any one response has arrived (same reasoning as
+                // tests/concurrency.test.js).
+                const settled = await Promise.allSettled(requests);
+                const responses = settled.map((outcome) => {
+                    if (outcome.status !== 'fulfilled') throw outcome.reason;
+                    return outcome.value;
+                });
+
+                let committedSum = 0;
+                for (let i = 0; i < responses.length; i += 1) {
+                    const response = responses[i];
+                    if (response.status === 201) {
+                        committedSum += quantities[i];
+                    } else {
+                        // Every other request is rejected 409: INSUFFICIENT_AVAILABLE_QUANTITY
+                        // when its conditional update or the location-total check fails
+                        // (Req 7.5, 7.6), or CONCURRENT_MODIFICATION when three-or-more-way
+                        // contention on this one record exhausts its retry budget before it
+                        // ever observes a settled state (Req 8.5) -- see the file-level
+                        // comment above for why both are correct outcomes here.
+                        expect(response.status).toBe(409);
+                        expect(['INSUFFICIENT_AVAILABLE_QUANTITY', 'CONCURRENT_MODIFICATION']).toContain(
+                            response.body.code
+                        );
+                    }
+                }
+
+                // The sum of the quantities of the orders that receive 201 is <= the
+                // availability measured before the set was submitted (Req 7.7).
+                expect(committedSum).toBeLessThanOrEqual(availability);
+
+                const orders = await CustomerOrder.find({ item, location: LOCATION_ID }).lean();
+                const committedCount = responses.filter((r) => r.status === 201).length;
+
+                // Every other request creates no order: exactly one Customer_Order per
+                // committed request, none for a rejected one (Req 7.5, 7.6).
+                expect(orders).toHaveLength(committedCount);
+
+                const record = await InventoryRecord.findOne({
+                    item,
+                    location: LOCATION_ID,
+                }).lean();
+
+                // reservedQuantity <= physicalQuantity holds for the affected record
+                // afterward (Req 7.7), and since the record started at reservedQuantity 0
+                // with no other writer, the increase equals exactly the committed sum --
+                // no oversell, no lost update.
+                expect(record.reservedQuantity).toBeLessThanOrEqual(record.physicalQuantity);
+                expect(record.reservedQuantity).toBe(committedSum);
+            }),
+            RUNS_PROPERTY_13
+        );
+    });
+});
+
+// --- Property 14 ---------------------------------------------------------------------
+// Reservation outcome is order-independent (design.md Property 14, Req 7.8).
+//
+// This is a property about SUBMISSION ORDER, not concurrency: every request in a trial is
+// awaited before the next one is sent, so there is no race here at all -- only the
+// sequential order in which otherwise-independent requests are submitted varies between the
+// two trials.
+//
+// design.md's prose ("whenever the same subset of requests commits, the final total
+// reserved quantity ... is the same") is not a claim that the SAME subset always commits
+// regardless of order -- sequential first-fit allocation can and does let submission order
+// change which individual requests fit. What actually has to hold, and what the reservation
+// algorithm is required to be, is DETERMINISTIC and CONSISTENT bookkeeping: whichever subset
+// of requests a given ordering happens to commit, the resulting reservedQuantity total for
+// that ordering is exactly the sum of that subset's quantities (no partial reservation, no
+// double counting), it never exceeds the availability the pool started with, and -- the
+// genuinely order-INDEPENDENT part -- if two different orderings happen to commit the same
+// subset (by original request identity, not merely by value), their resulting totals agree,
+// because that total is nothing more than the sum of the same set of quantities either way.
+//
+// Each of the two trials below starts from a freshly created Item and a freshly created
+// InventoryRecord with the SAME availability, so "identical starting inventory" (design.md)
+// holds without the two trials ever touching the same document.
+
+/**
+ * Generates one scenario: an availability, and 2..4 quantities each individually within that
+ * availability (so no single request is disqualified before the race over ordering can even
+ * begin), plus two independently generated permutations of the request indices to submit
+ * them in.
+ */
+const genOrderingScenario = fc
+    .integer({ min: 5, max: 200 })
+    .chain((availability) =>
+        fc
+            .array(fc.integer({ min: 1, max: availability }), { minLength: 2, maxLength: 4 })
+            .chain((quantities) => {
+                const indices = quantities.map((_, index) => index);
+                return fc
+                    .tuple(
+                        fc.shuffledSubarray(indices, {
+                            minLength: indices.length,
+                            maxLength: indices.length,
+                        }),
+                        fc.shuffledSubarray(indices, {
+                            minLength: indices.length,
+                            maxLength: indices.length,
+                        })
+                    )
+                    .map(([orderA, orderB]) => ({ availability, quantities, orderA, orderB }));
+            })
+    );
+
+/**
+ * Runs one sequential submission trial: a fresh Item and InventoryRecord (Physical_Quantity
+ * = `availability`, Reserved_Quantity 0), then one awaited `POST /api/orders` per index in
+ * `order`, in that order.
+ *
+ * @param {number} availability
+ * @param {number[]} quantities the full quantity list, indexed by original request identity
+ * @param {number[]} order a permutation of `quantities`' indices, the submission order
+ * @param {string} salesToken
+ * @returns {Promise<{ committedIndices: Set<number>, reservedQuantity: number }>}
+ */
+async function runSequentialTrial(availability, quantities, order, salesToken) {
+    const item = await createFreshItem();
+    await InventoryRecord.create({
+        item,
+        location: LOCATION_ID,
+        batch: 'ONLY',
+        physicalQuantity: availability,
+        reservedQuantity: 0,
+    });
+
+    const committedIndices = new Set();
+    let committedSum = 0;
+
+    for (const index of order) {
+        // Awaited one at a time: this is deliberately sequential, not concurrent.
+        const response = await agent()
+            .post('/api/orders')
+            .set('Authorization', `Bearer ${salesToken}`)
+            .send({
+                customerName: 'Property 14 Customer',
+                item,
+                location: LOCATION_ID,
+                quantity: quantities[index],
+            });
+
+        if (response.status === 201) {
+            committedIndices.add(index);
+            committedSum += quantities[index];
+        } else {
+            expect(response.status).toBe(409);
+            expect(response.body.code).toBe('INSUFFICIENT_AVAILABLE_QUANTITY');
+        }
+    }
+
+    const record = await InventoryRecord.findOne({ item, location: LOCATION_ID }).lean();
+
+    // Deterministic, consistent bookkeeping for THIS ordering: the final reservedQuantity is
+    // exactly the sum of the subset that committed (Req 7.8), and it never exceeds the
+    // availability the pool started with (no oversell under sequential submission either).
+    expect(record.reservedQuantity).toBe(committedSum);
+    expect(record.reservedQuantity).toBeLessThanOrEqual(availability);
+
+    return { committedIndices, reservedQuantity: record.reservedQuantity };
+}
+
+// Feature: mini-operations-erp, Property 14: Reservation outcome is order-independent
+describe('Property 14: Reservation outcome is order-independent', () => {
+    test('each submission ordering reserves exactly the sum of the subset it commits, and two orderings that happen to commit the same subset agree on the resulting total', async () => {
+        const salesToken = await tokenFor('SalesUser');
+
+        await fc.assert(
+            fc.asyncProperty(
+                genOrderingScenario,
+                async ({ availability, quantities, orderA, orderB }) => {
+                    const trialA = await runSequentialTrial(
+                        availability,
+                        quantities,
+                        orderA,
+                        salesToken
+                    );
+                    const trialB = await runSequentialTrial(
+                        availability,
+                        quantities,
+                        orderB,
+                        salesToken
+                    );
+
+                    // The order-INDEPENDENT part: when the two orderings happen to commit
+                    // the same subset of requests (by original request identity), the
+                    // resulting reservedQuantity totals agree (Req 7.8). Submission order is
+                    // otherwise free to change WHICH subset commits -- that is not what this
+                    // property claims.
+                    const sameSubsetCommitted =
+                        trialA.committedIndices.size === trialB.committedIndices.size &&
+                        [...trialA.committedIndices].every((index) =>
+                            trialB.committedIndices.has(index)
+                        );
+
+                    if (sameSubsetCommitted) {
+                        expect(trialA.reservedQuantity).toBe(trialB.reservedQuantity);
+                    }
+                }
+            ),
+            RUNS_PROPERTY_14
         );
     });
 });

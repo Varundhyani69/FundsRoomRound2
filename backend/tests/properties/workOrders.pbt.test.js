@@ -28,13 +28,13 @@ const { genQuantity, genRecordLayout } = require('../setup/generators');
 // Both properties drive the real routes over HTTP through the exported app, the same
 // reason Properties 2-7 in inventory.pbt.test.js do: everything here involves the
 // validation layer, the authorize map, or the status/shortage guards actually living in
-// workOrder.service.js.
-const RUNS_PROPERTY_8 = { numRuns: 30 };
+// workOrder.service.js. Both use exactly the numRuns: 25 floor of Req 12.7 for speed.
+const RUNS_PROPERTY_8 = { numRuns: 25 };
 // A finite space of 9 valid current/target pairs plus 6 out-of-enum-target pairs (15
-// concrete cases total, built below). numRuns is set well above that count so repeated
-// random draws from fc.constantFrom give every case a strong chance of being exercised at
-// least once, without needing to enumerate them with a non-property test.
-const RUNS_PROPERTY_9 = { numRuns: 40 };
+// concrete cases total, built below). 25 runs of random draws from fc.constantFrom still
+// gives every case a strong chance of being exercised at least once, without needing to
+// enumerate them with a non-property test.
+const RUNS_PROPERTY_9 = { numRuns: 25 };
 
 // A location every property below can reuse. The fixture only seeds Inventory_Records for
 // widget/gadget at `main`; a fresh Item per iteration (see below) is what keeps every

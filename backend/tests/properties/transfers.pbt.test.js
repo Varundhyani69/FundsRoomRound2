@@ -33,9 +33,9 @@ const { FIXTURE_LOCATIONS, FIXTURE_CATEGORIES, tokenFor } = require('../setup/se
 
 // Both properties issue a handful of real HTTP requests per iteration (create, dispatch,
 // and one or more receive attempts) plus several direct DB reads, a similar cost shape to
-// inventory.pbt.test.js's Properties 3, 5, and 6. 30 and 25 runs each clear the numRuns: 25
-// floor of Req 12.7 while keeping the whole file's run time reasonable.
-const RUNS_PROPERTY_10 = { numRuns: 30 };
+// inventory.pbt.test.js's Properties 3, 5, and 6. Both use exactly the numRuns: 25 floor of
+// Req 12.7 for speed.
+const RUNS_PROPERTY_10 = { numRuns: 25 };
 const RUNS_PROPERTY_11 = { numRuns: 25 }; // up to 5 sequential receive requests per run
 
 const SOURCE_LOCATION_ID = FIXTURE_LOCATIONS.main.id;

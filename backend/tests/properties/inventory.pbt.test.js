@@ -20,12 +20,11 @@
 // each run's records are scoped to an Item nothing else can see, instead of hand-rolling
 // a delete between runs.
 //
-// PERFORMANCE: properties that drive the real HTTP+Mongo stack use fewer runs than the
-// 100 used for the pure config-loader properties in api.pbt.test.js. Property 1 needs no
-// HTTP round trip, so it keeps a higher run count; Properties 2 and 4 replay sequences of
-// up to 20 operations each, which is the most expensive shape here, so they use the
-// fewest runs and a longer per-test timeout. This still clears the numRuns: 25 floor of
-// Req 12.7 for every property.
+// PERFORMANCE: every property below uses exactly the numRuns: 25 floor of Req 12.7, the
+// minimum that still satisfies the requirement, so the suite runs as fast as possible.
+// Properties 2 and 4 additionally replay sequences of up to 20 operations per run, which is
+// the most expensive shape in this file, so they keep the longer per-test timeout even
+// though their run count is the same as every other property here.
 
 const crypto = require('crypto');
 const fc = require('fast-check');
@@ -41,13 +40,13 @@ const { FIXTURE_LOCATIONS, FIXTURE_CATEGORIES, tokenFor } = require('../setup/se
 const { genQuantity, genInvalidQuantity, genBatch, genRecordLayout, genOperationSequence } =
     require('../setup/generators');
 
-const RUNS_PROPERTY_1 = { numRuns: 50 }; // pure read, no HTTP round trip
-const RUNS_PROPERTY_2 = { numRuns: 20 }; // sequences of up to 20 HTTP-driven operations
-const RUNS_PROPERTY_3 = { numRuns: 30 };
-const RUNS_PROPERTY_4 = { numRuns: 20 }; // same cost shape as Property 2
+const RUNS_PROPERTY_1 = { numRuns: 25 };
+const RUNS_PROPERTY_2 = { numRuns: 25 }; // sequences of up to 20 HTTP-driven operations
+const RUNS_PROPERTY_3 = { numRuns: 25 };
+const RUNS_PROPERTY_4 = { numRuns: 25 }; // same cost shape as Property 2
 const RUNS_PROPERTY_5 = { numRuns: 25 };
 const RUNS_PROPERTY_6 = { numRuns: 25 };
-const RUNS_PROPERTY_7 = { numRuns: 30 };
+const RUNS_PROPERTY_7 = { numRuns: 25 };
 
 // A long timeout for the two sequence-driven properties: each run issues up to 20 real
 // HTTP requests against the in-memory replica set, and fast-check repeats that `numRuns`

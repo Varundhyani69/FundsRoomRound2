@@ -335,7 +335,7 @@ Scope discipline: no file, function, or abstraction beyond what design.md names.
     - `git commit -m "Add internal transfers with dispatch and receipt lifecycle"`, then `git push`
     - _Requirements: 14.1, 14.2, 14.7_
 
-- [ ] 8. Customer orders and stock reservation
+- [x] 8. Customer orders and stock reservation
   - [x] 8.1 Create the CustomerOrder model
     - `backend/src/models/CustomerOrder.js` — embedded `reservationEntrySchema` (`item`, `location`, `batch`, `quantity`, `_id: false`), `customerName` 1..120 trimmed, `item`, `location`, `quantity`, `status` enum defaulting to `Reserved`, `reservations` validated to hold 1..20 entries, `createdBy`, indexes `{ item, location }` and `{ status }`
     - _Requirements: 7.1, 7.11, 15.3_
@@ -365,7 +365,7 @@ Scope discipline: no file, function, or abstraction beyond what design.md names.
     - **Property 12: A reservation exactly covers its order, in ascending batch order**
     - **Validates: Requirements 7.1, 7.3, 15.3, 15.6**
 
-  - [-] 8.8 Run the suite, commit, and push increment 8
+  - [x] 8.8 Run the suite, commit, and push increment 8
     - Run `npm test`; commit only on exit 0
     - `git commit -m "Add customer orders with ascending-batch stock reservation"`, then `git push`
     - _Requirements: 14.1, 14.2, 14.7_
@@ -384,29 +384,29 @@ Scope discipline: no file, function, or abstraction beyond what design.md names.
     - `backend/tests/transactions.test.js` — rollback totality on an injected mid-transaction failure, open session count returning to baseline, retry count and `CONCURRENT_MODIFICATION` at exhaustion, and a graceful shutdown smoke test
     - _Requirements: 8.2, 8.3, 8.4, 8.5, 8.8_
 
-  - [ ]* 9.4 Write property test for concurrent reservation safety
+  - [x]* 9.4 Write property test for concurrent reservation safety
     - `backend/tests/properties/orders.pbt.test.js`
     - **Property 13: Concurrent reservations can never oversell**
     - **Validates: Requirements 7.5, 7.6, 7.7**
 
-  - [ ]* 9.5 Write property test for reservation confluence
+  - [x]* 9.5 Write property test for reservation confluence
     - **Property 14: Reservation outcome is order-independent**
     - **Validates: Requirements 7.8**
 
-  - [ ]* 9.6 Write property test for session and retry bounds
+  - [x]* 9.6 Write property test for session and retry bounds
     - `backend/tests/properties/api.pbt.test.js`
     - **Property 17: Sessions and retries are bounded**
     - **Validates: Requirements 8.3, 8.5**
 
-  - [ ]* 9.7 Write property test for the rejected-request contract
+  - [x]* 9.7 Write property test for the rejected-request contract
     - **Property 15: Every rejected request answers from the declared code table and changes nothing**
     - **Validates: Requirements 3.11, 5.3, 5.12, 6.14, 6.15, 7.10, 7.11, 7.12, 9.2, 9.4, 9.5, 9.6, 9.7, 9.9, 9.10, 9.12**
 
-  - [ ]* 9.8 Write property test for authentication and role enforcement
+  - [x]* 9.8 Write property test for authentication and role enforcement
     - **Property 16: Authentication and role enforcement hold across the route table**
     - **Validates: Requirements 1.2, 1.3, 1.4, 1.7, 1.8, 1.9, 1.11, 2.1, 2.2, 2.3, 2.4, 2.5, 2.6, 2.7, 2.12, 2.13**
 
-  - [ ] 9.9 Run the suite, commit, and push increment 9
+  - [-] 9.9 Run the suite, commit, and push increment 9
     - Run `npm test`; commit only on exit 0
     - `git commit -m "Add concurrency and transaction hardening tests with retry bounds"`, then `git push`
     - _Requirements: 14.1, 14.2, 14.7_
