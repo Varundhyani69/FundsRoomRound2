@@ -8,7 +8,12 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../auth/AuthContext.jsx';
-import DemoCredentials from '../components/DemoCredentials.jsx';
+
+const DEMO_ACCOUNTS = [
+    { role: 'Admin', email: 'admin@mini-erp.local', password: 'admin-local-dev-pw' },
+    { role: 'OperationsUser', email: 'operations@mini-erp.local', password: 'ops-local-dev-pw' },
+    { role: 'SalesUser', email: 'sales@mini-erp.local', password: 'sales-local-dev-pw' },
+];
 
 export default function LoginScreen() {
     const { login } = useAuth();
@@ -86,18 +91,27 @@ export default function LoginScreen() {
                     </button>
                 </form>
 
-                {/* Renders nothing unless VITE_DEMO_PASSWORD was set at build
-                    time -- see the warning at the top of DemoCredentials.jsx.
-                    Fills the form rather than submitting it, and clears any
-                    previous rejection message so a stale error does not sit
-                    above freshly filled credentials. */}
-                <DemoCredentials
-                    onPick={(demoEmail, demoPassword) => {
-                        setEmail(demoEmail);
-                        setPassword(demoPassword);
-                        setError(null);
-                    }}
-                />
+                <div className="mt-6 rounded-lg border border-slate-200 bg-slate-50 p-4">
+                    <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">Demo Credentials</p>
+                    <table className="w-full text-xs text-slate-700">
+                        <thead>
+                            <tr className="border-b border-slate-200">
+                                <th className="pb-1 text-left font-medium">Role</th>
+                                <th className="pb-1 text-left font-medium">Email</th>
+                                <th className="pb-1 text-left font-medium">Password</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {DEMO_ACCOUNTS.map((acc) => (
+                                <tr key={acc.role} className="border-b border-slate-100 last:border-0">
+                                    <td className="py-1 font-medium">{acc.role}</td>
+                                    <td className="py-1 font-mono">{acc.email}</td>
+                                    <td className="py-1 font-mono">{acc.password}</td>
+                                </tr>
+                            ))}
+                        </tbody>
+                    </table>
+                </div>
             </div>
         </main>
     );

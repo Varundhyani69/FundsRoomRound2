@@ -23,8 +23,14 @@
 // VITE_DEMO_PASSWORD when you seed that deployment, or the buttons will fill a
 // password the server rejects.
 
-// Substituted at build time by Vite. `undefined` when the variable was absent.
-const DEMO_PASSWORD = import.meta.env.VITE_DEMO_PASSWORD;
+// Substituted at build time by Vite. `undefined` when the variables were absent.
+// Three separate passwords since the seed script allows each role's password to differ.
+const DEMO_ADMIN_PW = import.meta.env.VITE_DEMO_ADMIN_PASSWORD;
+const DEMO_OPS_PW = import.meta.env.VITE_DEMO_OPS_PASSWORD;
+const DEMO_SALES_PW = import.meta.env.VITE_DEMO_SALES_PASSWORD;
+
+// True when at least one demo password was provided at build time.
+const ENABLED = Boolean(DEMO_ADMIN_PW || DEMO_OPS_PW || DEMO_SALES_PW);
 
 // Mirrors SEED_USERS in backend/scripts/seed.js. The descriptions say what each
 // role can do, so the panel doubles as an explanation of the authorization model
@@ -33,16 +39,19 @@ const DEMO_ACCOUNTS = [
     {
         role: 'Admin',
         email: 'admin@mini-erp.local',
+        password: DEMO_ADMIN_PW,
         can: 'everything',
     },
     {
         role: 'Operations',
         email: 'operations@mini-erp.local',
+        password: DEMO_OPS_PW,
         can: 'inventory, transfers, work order status',
     },
     {
         role: 'Sales',
         email: 'sales@mini-erp.local',
+        password: DEMO_SALES_PW,
         can: 'customer orders, plus read-only everywhere',
     },
 ];
