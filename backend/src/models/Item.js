@@ -3,6 +3,15 @@
 
 const mongoose = require('mongoose');
 
+// Required so the Category schema is registered with Mongoose before anything calls
+// `.populate('category')` on an Item (or on an Item nested under another populate, as
+// inventory/work-order/transfer/order services all do). Mongoose only needs the ref by
+// name at populate time, but that name still has to resolve to a model that some module
+// has actually required at least once; nothing else in the server's normal request path
+// requires Category.js directly, so without this line the very first request that
+// populates a Category (any record that actually has data) throws MissingSchemaError.
+require('./Category');
+
 const itemSchema = new mongoose.Schema(
     {
         // The Item code is the business identity, so it is unique and trimmed. Two Items
