@@ -53,11 +53,14 @@ export function AuthProvider({ children }) {
         // so it can show the message and keep the form filled in (Req 11.16).
         const response = await post('/api/auth/login', { email, password });
 
+        // The API responds with { token, user: { id, email, role, assignedLocation } }
+        // (backend/src/controllers/auth.controller.js) -- the user fields are nested
+        // under `user`, not top-level on the response.
         const loggedInUser = {
-            id: response.id,
-            email: response.email,
-            role: response.role,
-            assignedLocation: response.assignedLocation,
+            id: response.user.id,
+            email: response.user.email,
+            role: response.user.role,
+            assignedLocation: response.user.assignedLocation,
         };
 
         setToken(response.token);

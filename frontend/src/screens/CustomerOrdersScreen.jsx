@@ -23,10 +23,12 @@ import { useEffect, useState } from 'react';
 import { get, post } from '../api/client.js';
 import { useAuth } from '../auth/AuthContext.jsx';
 import { canWrite } from '../auth/permissions.js';
+import { useReferenceData } from '../hooks/useReferenceData.js';
 import DataTable from '../components/DataTable.jsx';
 import ErrorBanner from '../components/ErrorBanner.jsx';
 import EmptyState from '../components/EmptyState.jsx';
 import StatusBadge from '../components/StatusBadge.jsx';
+import Modal from '../components/Modal.jsx';
 
 const COLUMNS = [
     { key: 'customerName', label: 'Customer Name' },
@@ -53,6 +55,9 @@ export default function CustomerOrdersScreen() {
     const { role } = useAuth();
     const canCreate = canWrite('POST /api/orders', role);
 
+    // Item/Location dropdown options for the creation form.
+    const { items, locations } = useReferenceData({ items: true, locations: true });
+
     const [rows, setRows] = useState([]);
     const [error, setError] = useState(null);
     const [loading, setLoading] = useState(true);
@@ -62,6 +67,9 @@ export default function CustomerOrdersScreen() {
     const [location, setLocation] = useState('');
     const [quantity, setQuantity] = useState('');
     const [submitting, setSubmitting] = useState(false);
+    // Whether the "Create Order" popup is open; the form renders only inside
+    // <Modal> so it is not pinned above the table.
+    const [createOpen, setCreateOpen] = useState(false);
 
     async function load() {
         try {
@@ -95,6 +103,7 @@ export default function CustomerOrdersScreen() {
             setItem('');
             setLocation('');
             setQuantity('');
+            setCreateOpen(false);
             await load(); // refetch the list on success (Req 11.14)
         } catch (err) {
             // Covers rejections such as INSUFFICIENT_AVAILABLE_QUANTITY when
@@ -106,84 +115,129 @@ export default function CustomerOrdersScreen() {
         }
     }
 
+    function closeCreateModal() {
+        setCreateOpen(false);
+    }
+
     const inputClass =
         'block w-full rounded-md border border-slate-300 px-3 py-2 text-sm text-slate-900 shadow-sm focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500';
 
     return (
         <main>
-            <h1 className="mb-4 text-2xl font-semibold text-slate-900">Customer Orders</h1>
-            <ErrorBanner message={error} />
-            {canCreate && (
-                <form onSubmit={handleSubmit} className="mb-6 rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
-                    <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
-                        <div>
-                            <label htmlFor="order-customer-name" className="mb-1 block text-sm font-medium text-slate-700">
-                                Customer Name
-                            </label>
-                            <input
-                                id="order-customer-name"
-                                type="text"
-                                value={customerName}
-                                onChange={(event) => setCustomerName(event.target.value)}
-                                required
-                                className={inputClass}
-                            />
-                        </div>
-                        <div>
-                            <label htmlFor="order-item" className="mb-1 block text-sm font-medium text-slate-700">
-                                Item
-                            </label>
-                            <input
-                                id="order-item"
-                                type="text"
-                                value={item}
-                                onChange={(event) => setItem(event.target.value)}
-                                required
-                                className={inputClass}
-                            />
-                        </div>
-                        <div>
-                            <label htmlFor="order-location" className="mb-1 block text-sm font-medium text-slate-700">
-                                Location
-                            </label>
-                            <input
-                                id="order-location"
-                                type="text"
-                                value={location}
-                                onChange={(event) => setLocation(event.target.value)}
-                                required
-                                className={inputClass}
-                            />
-                        </div>
-                        <div>
-                            <label htmlFor="order-quantity" className="mb-1 block text-sm font-medium text-slate-700">
-                                Quantity
-                            </label>
-                            <input
-                                id="order-quantity"
-                                type="number"
-                                value={quantity}
-                                onChange={(event) => setQuantity(event.target.value)}
-                                required
-                                className={inputClass}
-                            />
-                        </div>
-                    </div>
+            <div className="mb-4 flex items-center justify-between">
+                <h1 className="text-2xl font-semibold text-slate-900">Customer Orders</h1>
+                {canCreate && (
                     <button
-                        type="submit"
-                        disabled={submitting}
-                        className="mt-4 rounded-md bg-brand-600 px-4 py-2 text-sm font-medium text-white shadow-sm hover:bg-brand-700 disabled:cursor-not-allowed disabled:opacity-60"
+                        type="button"
+                        onClick={() => setCreateOpen(true)}
+                        className="rounded-md bg-brand-600 px-4 py-2 text-sm font-medium text-white shadow-sm hover:bg-brand-700"
                     >
-                        {submitting ? 'Creating…' : 'Create Order'}
+                        + New Order
                     </button>
-                </form>
-            )}
+                )}
+            </div>
+            <ErrorBanner message={error} />
+
             {loading ? (
                 <p className="text-sm text-slate-500">Loading…</p>
             ) : rows.length === 0 ? (
                 <EmptyState message="No customer orders found" />
             ) : (
                 <DataTable columns={COLUMNS} rows={rows} />
+            )}
+
+            {canCreate && (
+                <Modal open={createOpen} title="Create Order" onClose={closeCreateModal}>
+                    <form onSubmit={handleSubmit}>
+                        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                            <div>
+                                <label htmlFor="order-customer-name" className="mb-1 block text-sm font-medium text-slate-700">
+                                    Customer Name
+                                </label>
+                                <input
+                                    id="order-customer-name"
+                                    type="text"
+                                    value={customerName}
+                                    onChange={(event) => setCustomerName(event.target.value)}
+                                    required
+                                    className={inputClass}
+                                />
+                            </div>
+                            <div>
+                                <label htmlFor="order-item" className="mb-1 block text-sm font-medium text-slate-700">
+                                    Item
+                                </label>
+                                <select
+                                    id="order-item"
+                                    value={item}
+                                    onChange={(event) => setItem(event.target.value)}
+                                    required
+                                    className={inputClass}
+                                >
+                                    <option value="" disabled>
+                                        Select an item…
+                                    </option>
+                                    {items.map((option) => (
+                                        <option key={option.id} value={option.id}>
+                                            {option.code} - {option.name}
+                                        </option>
+                                    ))}
+                                </select>
+                            </div>
+                            <div>
+                                <label htmlFor="order-location" className="mb-1 block text-sm font-medium text-slate-700">
+                                    Location
+                                </label>
+                                <select
+                                    id="order-location"
+                                    value={location}
+                                    onChange={(event) => setLocation(event.target.value)}
+                                    required
+                                    className={inputClass}
+                                >
+                                    <option value="" disabled>
+                                        Select a location…
+                                    </option>
+                                    {locations.map((option) => (
+                                        <option key={option.id} value={option.id}>
+                                            {option.code} - {option.name}
+                                        </option>
+                                    ))}
+                                </select>
+                            </div>
+                            <div>
+                                <label htmlFor="order-quantity" className="mb-1 block text-sm font-medium text-slate-700">
+                                    Quantity
+                                </label>
+                                <input
+                                    id="order-quantity"
+                                    type="number"
+                                    value={quantity}
+                                    onChange={(event) => setQuantity(event.target.value)}
+                                    required
+                                    className={inputClass}
+                                />
+                            </div>
+                        </div>
+                        <div className="mt-4 flex justify-end gap-2">
+                            <button
+                                type="button"
+                                onClick={closeCreateModal}
+                                disabled={submitting}
+                                className="rounded-md border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-60"
+                            >
+                                Cancel
+                            </button>
+                            <button
+                                type="submit"
+                                disabled={submitting}
+                                className="rounded-md bg-brand-600 px-4 py-2 text-sm font-medium text-white shadow-sm hover:bg-brand-700 disabled:cursor-not-allowed disabled:opacity-60"
+                            >
+                                {submitting ? 'Creating…' : 'Create Order'}
+                            </button>
+                        </div>
+                    </form>
+                </Modal>
             )}
         </main>
     );

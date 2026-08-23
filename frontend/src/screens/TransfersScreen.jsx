@@ -22,10 +22,12 @@ import { useEffect, useState } from 'react';
 import { get, post } from '../api/client.js';
 import { useAuth } from '../auth/AuthContext.jsx';
 import { canWrite } from '../auth/permissions.js';
+import { useReferenceData } from '../hooks/useReferenceData.js';
 import DataTable from '../components/DataTable.jsx';
 import ErrorBanner from '../components/ErrorBanner.jsx';
 import EmptyState from '../components/EmptyState.jsx';
 import StatusBadge from '../components/StatusBadge.jsx';
+import Modal from '../components/Modal.jsx';
 
 const COLUMNS = [
     { key: 'id', label: 'ID' },
@@ -70,8 +72,14 @@ export default function TransfersScreen() {
     const [error, setError] = useState(null);
     const [loading, setLoading] = useState(true);
 
+    // Item/Location dropdown options for the creation form.
+    const { items, locations } = useReferenceData({ items: true, locations: true });
+
     const [form, setForm] = useState(EMPTY_FORM);
     const [creating, setCreating] = useState(false);
+    // Whether the "Create Transfer" popup is open; the form renders only
+    // inside <Modal> so it is not pinned above the table.
+    const [createOpen, setCreateOpen] = useState(false);
 
     // The id + action of whichever row control is currently in flight, so
     // only that one control is disabled (Req 11.13) rather than every
@@ -136,12 +144,17 @@ export default function TransfersScreen() {
             });
             setForm(EMPTY_FORM);
             setError(null);
+            setCreateOpen(false);
             await load(); // refetch after a successful write (Req 11.14)
         } catch (err) {
             setError(err.message);
         } finally {
             setCreating(false);
         }
+    }
+
+    function closeCreateModal() {
+        setCreateOpen(false);
     }
 
     async function handleDispatch(id) {
@@ -223,58 +236,19 @@ export default function TransfersScreen() {
 
     return (
         <main>
-            <h1 className="mb-4 text-2xl font-semibold text-slate-900">Internal Transfers</h1>
-            <ErrorBanner message={error} />
-
-            {canCreate && (
-                <form onSubmit={handleCreate} className="mb-6 rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
-                    <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
-                        <label className={labelClass}>
-                            Item
-                            <input value={form.item} onChange={handleFieldChange('item')} required className={`mt-1 ${inputClass}`} />
-                        </label>
-                        <label className={labelClass}>
-                            Batch
-                            <input value={form.batch} onChange={handleFieldChange('batch')} required className={`mt-1 ${inputClass}`} />
-                        </label>
-                        <label className={labelClass}>
-                            Source Location
-                            <input
-                                value={form.sourceLocation}
-                                onChange={handleFieldChange('sourceLocation')}
-                                required
-                                className={`mt-1 ${inputClass}`}
-                            />
-                        </label>
-                        <label className={labelClass}>
-                            Destination Location
-                            <input
-                                value={form.destinationLocation}
-                                onChange={handleFieldChange('destinationLocation')}
-                                required
-                                className={`mt-1 ${inputClass}`}
-                            />
-                        </label>
-                        <label className={labelClass}>
-                            Quantity
-                            <input
-                                type="number"
-                                value={form.quantity}
-                                onChange={handleFieldChange('quantity')}
-                                required
-                                className={`mt-1 ${inputClass}`}
-                            />
-                        </label>
-                    </div>
+            <div className="mb-4 flex items-center justify-between">
+                <h1 className="text-2xl font-semibold text-slate-900">Internal Transfers</h1>
+                {canCreate && (
                     <button
-                        type="submit"
-                        disabled={creating}
-                        className="mt-4 rounded-md bg-brand-600 px-4 py-2 text-sm font-medium text-white shadow-sm hover:bg-brand-700 disabled:cursor-not-allowed disabled:opacity-60"
+                        type="button"
+                        onClick={() => setCreateOpen(true)}
+                        className="rounded-md bg-brand-600 px-4 py-2 text-sm font-medium text-white shadow-sm hover:bg-brand-700"
                     >
-                        Create Transfer
+                        + New Transfer
                     </button>
-                </form>
-            )}
+                )}
+            </div>
+            <ErrorBanner message={error} />
 
             {loading ? (
                 <p className="text-sm text-slate-500">Loading…</p>
@@ -282,6 +256,95 @@ export default function TransfersScreen() {
                 <EmptyState message="No internal transfers found" />
             ) : (
                 <DataTable columns={columns} rows={displayRows} />
+            )}
+
+            {canCreate && (
+                <Modal open={createOpen} title="Create Transfer" onClose={closeCreateModal}>
+                    <form onSubmit={handleCreate}>
+                        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                            <label className={labelClass}>
+                                Item
+                                <select value={form.item} onChange={handleFieldChange('item')} required className={`mt-1 ${inputClass}`}>
+                                    <option value="" disabled>
+                                        Select an item…
+                                    </option>
+                                    {items.map((item) => (
+                                        <option key={item.id} value={item.id}>
+                                            {item.code} - {item.name}
+                                        </option>
+                                    ))}
+                                </select>
+                            </label>
+                            <label className={labelClass}>
+                                Batch
+                                <input value={form.batch} onChange={handleFieldChange('batch')} required className={`mt-1 ${inputClass}`} />
+                            </label>
+                            <label className={labelClass}>
+                                Source Location
+                                <select
+                                    value={form.sourceLocation}
+                                    onChange={handleFieldChange('sourceLocation')}
+                                    required
+                                    className={`mt-1 ${inputClass}`}
+                                >
+                                    <option value="" disabled>
+                                        Select a location…
+                                    </option>
+                                    {locations.map((location) => (
+                                        <option key={location.id} value={location.id}>
+                                            {location.code} - {location.name}
+                                        </option>
+                                    ))}
+                                </select>
+                            </label>
+                            <label className={labelClass}>
+                                Destination Location
+                                <select
+                                    value={form.destinationLocation}
+                                    onChange={handleFieldChange('destinationLocation')}
+                                    required
+                                    className={`mt-1 ${inputClass}`}
+                                >
+                                    <option value="" disabled>
+                                        Select a location…
+                                    </option>
+                                    {locations.map((location) => (
+                                        <option key={location.id} value={location.id}>
+                                            {location.code} - {location.name}
+                                        </option>
+                                    ))}
+                                </select>
+                            </label>
+                            <label className={labelClass}>
+                                Quantity
+                                <input
+                                    type="number"
+                                    value={form.quantity}
+                                    onChange={handleFieldChange('quantity')}
+                                    required
+                                    className={`mt-1 ${inputClass}`}
+                                />
+                            </label>
+                        </div>
+                        <div className="mt-4 flex justify-end gap-2">
+                            <button
+                                type="button"
+                                onClick={closeCreateModal}
+                                disabled={creating}
+                                className="rounded-md border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-60"
+                            >
+                                Cancel
+                            </button>
+                            <button
+                                type="submit"
+                                disabled={creating}
+                                className="rounded-md bg-brand-600 px-4 py-2 text-sm font-medium text-white shadow-sm hover:bg-brand-700 disabled:cursor-not-allowed disabled:opacity-60"
+                            >
+                                Create Transfer
+                            </button>
+                        </div>
+                    </form>
+                </Modal>
             )}
         </main>
     );

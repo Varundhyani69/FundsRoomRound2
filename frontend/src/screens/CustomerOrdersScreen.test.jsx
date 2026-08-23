@@ -1,6 +1,13 @@
 // frontend/src/screens/CustomerOrdersScreen.test.jsx -- permanent component
-// tests for CustomerOrdersScreen.jsx (task 10.11), replacing the throwaway
-// test written during task 10.9.
+// tests for CustomerOrdersScreen.jsx (task 10.11), extended when the Item/
+// Location text inputs became <select> dropdowns backed by GET /api/items
+// and GET /api/locations (useReferenceData), since a bare 24-character hex
+// text box was not something a person could fill in from memory.
+//
+// CustomerOrdersScreen now issues GET /api/items and GET /api/locations
+// (via useReferenceData, fired in that order by Promise.all) before its
+// own GET /api/orders list load, so every test queues get() resolutions in
+// that three-call order: items, locations, orders.
 
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import CustomerOrdersScreen from './CustomerOrdersScreen.jsx';
@@ -21,6 +28,20 @@ const SAMPLE_ORDER = {
     status: 'Reserved',
 };
 
+const REFERENCE_ITEMS = [{ id: 'item-id', code: 'ITM1', name: 'Widget' }];
+const REFERENCE_LOCATIONS = [{ id: 'loc-id', code: 'LOC1', name: 'Warehouse' }];
+
+/**
+ * Queues the two reference-data GETs (items, locations) ahead of the
+ * initial list GET. useReferenceData's effect only runs on mount, so a
+ * write handler's later refetch calls GET /api/orders alone.
+ */
+function queueInitialLoad(listResult) {
+    get.mockResolvedValueOnce(REFERENCE_ITEMS);
+    get.mockResolvedValueOnce(REFERENCE_LOCATIONS);
+    get.mockResolvedValueOnce(listResult);
+}
+
 describe('CustomerOrdersScreen', () => {
     beforeEach(() => {
         vi.clearAllMocks();
@@ -28,7 +49,7 @@ describe('CustomerOrdersScreen', () => {
 
     test('renders the documented columns', async () => {
         useAuth.mockReturnValue({ role: 'OperationsUser' });
-        get.mockResolvedValueOnce([SAMPLE_ORDER]);
+        queueInitialLoad([SAMPLE_ORDER]);
         render(<CustomerOrdersScreen />);
 
         await waitFor(() => expect(screen.getByText('Acme Corp')).toBeInTheDocument());
@@ -42,42 +63,63 @@ describe('CustomerOrdersScreen', () => {
         expect(screen.getByText('Reserved')).toBeInTheDocument();
     });
 
-    test('creation form is visible for SalesUser', async () => {
+    test('the New Order button is shown for SalesUser and opens the creation form in a dialog', async () => {
         useAuth.mockReturnValue({ role: 'SalesUser' });
-        get.mockResolvedValueOnce([]);
+        queueInitialLoad([]);
         render(<CustomerOrdersScreen />);
 
         await waitFor(() => expect(screen.getByText('No customer orders found')).toBeInTheDocument());
-        expect(screen.getByText('Create Order')).toBeInTheDocument();
+        // The form is a popup now, so the list is not pushed down by a form
+        // that is always on screen.
+        expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+
+        fireEvent.click(screen.getByRole('button', { name: '+ New Order' }));
+
+        expect(screen.getByRole('dialog', { name: 'Create Order' })).toBeInTheDocument();
     });
 
-    test('creation form is visible for Admin', async () => {
+    test('the New Order button is shown for Admin', async () => {
         useAuth.mockReturnValue({ role: 'Admin' });
-        get.mockResolvedValueOnce([]);
+        queueInitialLoad([]);
         render(<CustomerOrdersScreen />);
 
         await waitFor(() => expect(screen.getByText('No customer orders found')).toBeInTheDocument());
-        expect(screen.getByText('Create Order')).toBeInTheDocument();
+        expect(screen.getByRole('button', { name: '+ New Order' })).toBeInTheDocument();
     });
 
-    test('creation form is hidden for a role without order-write permission', async () => {
+    test('the New Order button is hidden for a role without order-write permission', async () => {
         useAuth.mockReturnValue({ role: 'OperationsUser' });
-        get.mockResolvedValueOnce([]);
+        queueInitialLoad([]);
         render(<CustomerOrdersScreen />);
 
         await waitFor(() => expect(screen.getByText('No customer orders found')).toBeInTheDocument());
-        expect(screen.queryByText('Create Order')).not.toBeInTheDocument();
+        expect(screen.queryByRole('button', { name: '+ New Order' })).not.toBeInTheDocument();
+    });
+
+    test('the item and location fields are dropdowns populated from GET /api/items and GET /api/locations', async () => {
+        useAuth.mockReturnValue({ role: 'SalesUser' });
+        queueInitialLoad([]);
+        render(<CustomerOrdersScreen />);
+
+        await waitFor(() => expect(screen.getByText('No customer orders found')).toBeInTheDocument());
+        fireEvent.click(screen.getByRole('button', { name: '+ New Order' }));
+
+        expect(screen.getByLabelText('Item')).toHaveDisplayValue('Select an item…');
+        expect(screen.getByText('ITM1 - Widget')).toBeInTheDocument();
+        expect(screen.getByLabelText('Location')).toHaveDisplayValue('Select a location…');
+        expect(screen.getByText('LOC1 - Warehouse')).toBeInTheDocument();
     });
 
     test('refetches the list after a successful order creation', async () => {
         useAuth.mockReturnValue({ role: 'SalesUser' });
-        get.mockResolvedValueOnce([]);
+        queueInitialLoad([]);
         post.mockResolvedValueOnce({});
-        get.mockResolvedValueOnce([SAMPLE_ORDER]);
+        get.mockResolvedValueOnce([SAMPLE_ORDER]); // the refetch: GET /api/orders only
 
         render(<CustomerOrdersScreen />);
 
         await waitFor(() => expect(screen.getByText('No customer orders found')).toBeInTheDocument());
+        fireEvent.click(screen.getByRole('button', { name: '+ New Order' }));
 
         fireEvent.change(screen.getByLabelText('Customer Name'), { target: { value: 'Acme Corp' } });
         fireEvent.change(screen.getByLabelText('Item'), { target: { value: 'item-id' } });
@@ -93,7 +135,6 @@ describe('CustomerOrdersScreen', () => {
                 quantity: 15,
             })
         );
-        await waitFor(() => expect(get).toHaveBeenCalledTimes(2));
         await waitFor(() => expect(screen.getByText('Acme Corp')).toBeInTheDocument());
     });
 });

@@ -30,10 +30,12 @@ import { useCallback, useEffect, useState } from 'react';
 import { get, post, patch } from '../api/client.js';
 import { useAuth } from '../auth/AuthContext.jsx';
 import { canWrite } from '../auth/permissions.js';
+import { useReferenceData } from '../hooks/useReferenceData.js';
 import DataTable from '../components/DataTable.jsx';
 import ErrorBanner from '../components/ErrorBanner.jsx';
 import EmptyState from '../components/EmptyState.jsx';
 import StatusBadge from '../components/StatusBadge.jsx';
+import Modal from '../components/Modal.jsx';
 
 const BASE_COLUMNS = [
     { key: 'id', label: 'ID' },
@@ -77,13 +79,18 @@ export default function WorkOrdersScreen() {
     const [error, setError] = useState(null);
     const [loading, setLoading] = useState(true);
 
-    // Creation form state (Req 11.7). Plain text inputs for the ObjectId
-    // fields since this screen has no dropdown-populating requirement.
+    // Location/Item/User dropdown options for the creation form.
+    const { items, locations, users } = useReferenceData({ items: true, locations: true, users: true });
+
+    // Creation form state (Req 11.7).
     const [formLocation, setFormLocation] = useState('');
     const [formItem, setFormItem] = useState('');
     const [formRequiredQuantity, setFormRequiredQuantity] = useState('');
     const [formAssignedUser, setFormAssignedUser] = useState('');
     const [creating, setCreating] = useState(false);
+    // Whether the "Create Work Order" popup is open; the form renders only
+    // inside <Modal> so it is not pinned above the table.
+    const [createOpen, setCreateOpen] = useState(false);
 
     // Tracks which row's status-change button is mid-request, so only that
     // row's control disables itself (Req 11.13) rather than every row's.
@@ -125,12 +132,17 @@ export default function WorkOrdersScreen() {
             setFormItem('');
             setFormRequiredQuantity('');
             setFormAssignedUser('');
+            setCreateOpen(false);
             await loadWorkOrders(); // Req 11.14
         } catch (err) {
             setError(err.message);
         } finally {
             setCreating(false);
         }
+    }
+
+    function closeCreateModal() {
+        setCreateOpen(false);
     }
 
     async function handleAdvanceStatus(id, nextStatus) {
@@ -178,82 +190,19 @@ export default function WorkOrdersScreen() {
 
     return (
         <main>
-            <h1 className="mb-4 text-2xl font-semibold text-slate-900">Work Orders</h1>
-            <ErrorBanner message={error} />
-
-            {canCreate && (
-                <form onSubmit={handleCreate} className="mb-6 rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
-                    <h2 className="mb-4 text-base font-semibold text-slate-900">Create Work Order</h2>
-                    <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-                        <div>
-                            <label htmlFor="work-order-location" className="mb-1 block text-sm font-medium text-slate-700">
-                                Location ID
-                            </label>
-                            <input
-                                id="work-order-location"
-                                type="text"
-                                value={formLocation}
-                                onChange={(event) => setFormLocation(event.target.value)}
-                                required
-                                className="block w-full rounded-md border border-slate-300 px-3 py-2 text-sm text-slate-900 shadow-sm focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
-                            />
-                        </div>
-                        <div>
-                            <label htmlFor="work-order-item" className="mb-1 block text-sm font-medium text-slate-700">
-                                Item ID
-                            </label>
-                            <input
-                                id="work-order-item"
-                                type="text"
-                                value={formItem}
-                                onChange={(event) => setFormItem(event.target.value)}
-                                required
-                                className="block w-full rounded-md border border-slate-300 px-3 py-2 text-sm text-slate-900 shadow-sm focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
-                            />
-                        </div>
-                        <div>
-                            <label
-                                htmlFor="work-order-required-quantity"
-                                className="mb-1 block text-sm font-medium text-slate-700"
-                            >
-                                Required Quantity
-                            </label>
-                            <input
-                                id="work-order-required-quantity"
-                                type="number"
-                                min="1"
-                                value={formRequiredQuantity}
-                                onChange={(event) => setFormRequiredQuantity(event.target.value)}
-                                required
-                                className="block w-full rounded-md border border-slate-300 px-3 py-2 text-sm text-slate-900 shadow-sm focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
-                            />
-                        </div>
-                        <div>
-                            <label
-                                htmlFor="work-order-assigned-user"
-                                className="mb-1 block text-sm font-medium text-slate-700"
-                            >
-                                Assigned User ID
-                            </label>
-                            <input
-                                id="work-order-assigned-user"
-                                type="text"
-                                value={formAssignedUser}
-                                onChange={(event) => setFormAssignedUser(event.target.value)}
-                                required
-                                className="block w-full rounded-md border border-slate-300 px-3 py-2 text-sm text-slate-900 shadow-sm focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
-                            />
-                        </div>
-                    </div>
+            <div className="mb-4 flex items-center justify-between">
+                <h1 className="text-2xl font-semibold text-slate-900">Work Orders</h1>
+                {canCreate && (
                     <button
-                        type="submit"
-                        disabled={creating}
-                        className="mt-4 rounded-md bg-brand-600 px-4 py-2 text-sm font-medium text-white shadow-sm hover:bg-brand-700 disabled:cursor-not-allowed disabled:opacity-60"
+                        type="button"
+                        onClick={() => setCreateOpen(true)}
+                        className="rounded-md bg-brand-600 px-4 py-2 text-sm font-medium text-white shadow-sm hover:bg-brand-700"
                     >
-                        {creating ? 'Creating…' : 'Create Work Order'}
+                        + New Work Order
                     </button>
-                </form>
-            )}
+                )}
+            </div>
+            <ErrorBanner message={error} />
 
             {loading ? (
                 <p className="text-sm text-slate-500">Loading…</p>
@@ -261,6 +210,115 @@ export default function WorkOrdersScreen() {
                 <EmptyState message="No work orders found" />
             ) : (
                 <DataTable columns={columns} rows={rows} />
+            )}
+
+            {canCreate && (
+                <Modal open={createOpen} title="Create Work Order" onClose={closeCreateModal}>
+                    <form onSubmit={handleCreate}>
+                        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                            <div>
+                                <label htmlFor="work-order-location" className="mb-1 block text-sm font-medium text-slate-700">
+                                    Location
+                                </label>
+                                <select
+                                    id="work-order-location"
+                                    value={formLocation}
+                                    onChange={(event) => setFormLocation(event.target.value)}
+                                    required
+                                    className="block w-full rounded-md border border-slate-300 px-3 py-2 text-sm text-slate-900 shadow-sm focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
+                                >
+                                    <option value="" disabled>
+                                        Select a location…
+                                    </option>
+                                    {locations.map((location) => (
+                                        <option key={location.id} value={location.id}>
+                                            {location.code} - {location.name}
+                                        </option>
+                                    ))}
+                                </select>
+                            </div>
+                            <div>
+                                <label htmlFor="work-order-item" className="mb-1 block text-sm font-medium text-slate-700">
+                                    Item
+                                </label>
+                                <select
+                                    id="work-order-item"
+                                    value={formItem}
+                                    onChange={(event) => setFormItem(event.target.value)}
+                                    required
+                                    className="block w-full rounded-md border border-slate-300 px-3 py-2 text-sm text-slate-900 shadow-sm focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
+                                >
+                                    <option value="" disabled>
+                                        Select an item…
+                                    </option>
+                                    {items.map((item) => (
+                                        <option key={item.id} value={item.id}>
+                                            {item.code} - {item.name}
+                                        </option>
+                                    ))}
+                                </select>
+                            </div>
+                            <div>
+                                <label
+                                    htmlFor="work-order-required-quantity"
+                                    className="mb-1 block text-sm font-medium text-slate-700"
+                                >
+                                    Required Quantity
+                                </label>
+                                <input
+                                    id="work-order-required-quantity"
+                                    type="number"
+                                    min="1"
+                                    value={formRequiredQuantity}
+                                    onChange={(event) => setFormRequiredQuantity(event.target.value)}
+                                    required
+                                    className="block w-full rounded-md border border-slate-300 px-3 py-2 text-sm text-slate-900 shadow-sm focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
+                                />
+                            </div>
+                            <div>
+                                <label
+                                    htmlFor="work-order-assigned-user"
+                                    className="mb-1 block text-sm font-medium text-slate-700"
+                                >
+                                    Assigned User
+                                </label>
+                                <select
+                                    id="work-order-assigned-user"
+                                    value={formAssignedUser}
+                                    onChange={(event) => setFormAssignedUser(event.target.value)}
+                                    required
+                                    className="block w-full rounded-md border border-slate-300 px-3 py-2 text-sm text-slate-900 shadow-sm focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
+                                >
+                                    <option value="" disabled>
+                                        Select a user…
+                                    </option>
+                                    {users.map((user) => (
+                                        <option key={user.id} value={user.id}>
+                                            {user.email} ({user.role})
+                                        </option>
+                                    ))}
+                                </select>
+                            </div>
+                        </div>
+                        <div className="mt-4 flex justify-end gap-2">
+                            <button
+                                type="button"
+                                onClick={closeCreateModal}
+                                disabled={creating}
+                                className="rounded-md border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-60"
+                            >
+                                Cancel
+                            </button>
+                            <button
+                                type="submit"
+                                disabled={creating}
+                                className="rounded-md bg-brand-600 px-4 py-2 text-sm font-medium text-white shadow-sm hover:bg-brand-700 disabled:cursor-not-allowed disabled:opacity-60"
+                            >
+                                {creating ? 'Creating…' : 'Create Work Order'}
+                            </button>
+                        </div>
+                    </form>
+                </Modal>
             )}
         </main>
     );
