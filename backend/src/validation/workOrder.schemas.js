@@ -5,7 +5,7 @@
 // INVALID_QUANTITY markers behave exactly as they do for inventory (Req 9.1).
 
 const { z } = require('zod');
-const { objectId, validQuantity } = require('./common');
+const { identifier, validQuantity } = require('./common');
 
 const WORK_ORDER_STATUSES = ['Assigned', 'InProgress', 'Completed'];
 
@@ -16,16 +16,16 @@ const WORK_ORDER_STATUSES = ['Assigned', 'InProgress', 'Completed'];
  */
 const createWorkOrderBody = z
     .object({
-        location: objectId,
-        item: objectId,
+        location: identifier,
+        item: identifier,
         requiredQuantity: validQuantity,
-        assignedUser: objectId,
+        assignedUser: identifier,
     })
     .strict();
 
 /** GET/PATCH /api/work-orders/:id path param (Req 5.12). */
 const workOrderIdParams = z.object({
-    id: objectId,
+    id: identifier,
 });
 
 /**
@@ -44,7 +44,7 @@ const changeWorkOrderStatusBody = z
 /** GET /api/work-orders query: both filters optional. */
 const listWorkOrdersQuery = z.object({
     status: z.enum(WORK_ORDER_STATUSES).optional(),
-    location: objectId.optional(),
+    location: identifier.optional(),
 });
 
 module.exports = {

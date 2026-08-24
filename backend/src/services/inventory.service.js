@@ -194,11 +194,11 @@ async function getLocationAvailability({ item, location }) {
 
 /**
  * Normalises what a caller may pass as the movement target into a locking SELECT plus its
- * parameters. Accepts a record id (a string, or an object carrying `_id`), or an
+ * parameters. Accepts a record id (a string, or an object carrying `id`), or an
  * `{ item, location, batch }` triple such as the one transfer.service.js passes when it
  * knows the record's identity but not its id.
  *
- * @param {string|{ _id?: string, item?: string, location?: string, batch?: string }} locator
+ * @param {string|{ id?: string, item?: string, location?: string, batch?: string }} locator
  * @returns {{ sql: string, params: any[] }}
  */
 function toLockingSelect(locator) {
@@ -207,8 +207,8 @@ function toLockingSelect(locator) {
     if (typeof locator === 'string') {
         return { sql: `${base} WHERE id = ? FOR UPDATE`, params: [locator] };
     }
-    if (locator && locator._id) {
-        return { sql: `${base} WHERE id = ? FOR UPDATE`, params: [String(locator._id)] };
+    if (locator && locator.id) {
+        return { sql: `${base} WHERE id = ? FOR UPDATE`, params: [String(locator.id)] };
     }
     return {
         sql: `${base} WHERE item_id = ? AND location_id = ? AND batch = ? FOR UPDATE`,

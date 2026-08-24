@@ -5,7 +5,7 @@
 // validate.js (Req 9.1).
 
 const { z } = require('zod');
-const { objectId, validQuantity, batch } = require('./common');
+const { identifier, validQuantity, batch } = require('./common');
 
 // --- starting physical quantity (record creation only) ------------------------
 // Req 3.10 lets a new Inventory_Record start at 0 units, up to 999,999,999 — the
@@ -60,8 +60,8 @@ const direction = z.enum(['IN', 'OUT'], {
  */
 const createInventoryRecordBody = z
     .object({
-        item: objectId,
-        location: objectId,
+        item: identifier,
+        location: identifier,
         batch,
         physicalQuantity: startingPhysicalQuantity,
         movementReference,
@@ -70,7 +70,7 @@ const createInventoryRecordBody = z
 
 /** POST /api/inventory/:id/adjust path param. */
 const adjustInventoryRecordParams = z.object({
-    id: objectId,
+    id: identifier,
 });
 
 /**
@@ -89,14 +89,14 @@ const adjustInventoryRecordBody = z
 
 /** GET /api/inventory query: both filters optional. */
 const listInventoryQuery = z.object({
-    item: objectId.optional(),
-    location: objectId.optional(),
+    item: identifier.optional(),
+    location: identifier.optional(),
 });
 
 /** GET /api/inventory/availability query: both filters required. */
 const availabilityQuery = z.object({
-    item: objectId,
-    location: objectId,
+    item: identifier,
+    location: identifier,
 });
 
 module.exports = {

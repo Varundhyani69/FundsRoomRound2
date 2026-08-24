@@ -89,7 +89,7 @@ const WORK_ORDER_SELECT = `
  * The rows are summed in JS by `locationAvailableQuantity` rather than by SQL's SUM(), so the
  * availability rule keeps exactly one definition (Req 15.1).
  *
- * @param {{ item: { _id: string }, location: { _id: string }, requiredQuantity: number }} workOrder
+ * @param {{ item: { id: string }, location: { id: string }, requiredQuantity: number }} workOrder
  * @returns {Promise<{ locationAvailableQuantity: number, shortageQuantity: number }>}
  */
 async function computeShortage(workOrder) {
@@ -97,7 +97,7 @@ async function computeShortage(workOrder) {
         `SELECT physical_quantity, reserved_quantity
            FROM inventory_records
           WHERE item_id = ? AND location_id = ?`,
-        [workOrder.item._id, workOrder.location._id]
+        [workOrder.item.id, workOrder.location.id]
     );
 
     const available = locationAvailableQuantity(

@@ -8,39 +8,6 @@
 const inventoryService = require('../services/inventory.service');
 
 /**
- * Shapes one populated InventoryRecord document into the API response shape
- * shared by GET /api/inventory, POST /api/inventory, and
- * POST /api/inventory/:id/adjust (design.md's API surface table). Reused across
- * all three so the shape is declared once.
- *
- * @param {import('mongoose').Document} record a record populated with `item`
- *   (and `item.category`) and `location`
- */
-function toInventoryRecordResponse(record) {
-    return {
-        id: String(record._id),
-        item: {
-            id: String(record.item._id),
-            code: record.item.code,
-            name: record.item.name,
-            category: {
-                id: String(record.item.category._id),
-                name: record.item.category.name,
-            },
-        },
-        location: {
-            id: String(record.location._id),
-            code: record.location.code,
-            name: record.location.name,
-        },
-        batch: record.batch,
-        physicalQuantity: record.physicalQuantity,
-        reservedQuantity: record.reservedQuantity,
-        availableQuantity: record.availableQuantity,
-    };
-}
-
-/**
  * GET /api/inventory
  * 200 [{ id, item, location, batch, physicalQuantity, reservedQuantity, availableQuantity }]
  * 400 INVALID_IDENTIFIER (raised by validate() before this runs)
@@ -51,7 +18,7 @@ async function listInventory(req, res, next) {
 
     try {
         const records = await inventoryService.listInventoryRecords({ item, location });
-        return res.status(200).json(records.map(toInventoryRecordResponse));
+        return res.status(200).json(records);
     } catch (error) {
         // Express 4 does not observe a rejected promise, so the error is handed to
         // next() explicitly: errorHandler stays the only place that writes an
@@ -98,7 +65,7 @@ async function createInventory(req, res, next) {
             physicalQuantity,
             createdBy: req.user.id,
         });
-        return res.status(201).json(toInventoryRecordResponse(record));
+        return res.status(201).json(record);
     } catch (error) {
         return next(error);
     }
@@ -124,7 +91,7 @@ async function adjustInventory(req, res, next) {
             movementReference,
             createdBy: req.user.id,
         });
-        return res.status(200).json(toInventoryRecordResponse(record));
+        return res.status(200).json(record);
     } catch (error) {
         return next(error);
     }

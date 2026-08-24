@@ -24,9 +24,9 @@ let pool = null;
  *   turning it on would let a single injected `;` chain a second statement, which
  *   is the one thing that turns an escaping mistake into a full compromise. The
  *   schema loader (scripts/migrate.js) splits its own statements instead.
- * - dateStrings: off. DATETIME(3) columns come back as JS Date objects, matching
- *   what the previous Mongoose models returned, so controllers serialise them the
- *   same way and the API's timestamp format is unchanged.
+ * - dateStrings: off. DATETIME(3) columns come back as JS Date objects, so
+ *   controllers serialise them with JSON.stringify's native Date handling and the
+ *   API's timestamp format is a consistent ISO 8601 string.
  * - connectionLimit 10: comfortably above the concurrency the test suite creates
  *   (its heaviest property test fires 5 simultaneous requests) while staying well
  *   under a default RDS max_connections.

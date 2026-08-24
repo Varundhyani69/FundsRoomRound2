@@ -1,9 +1,9 @@
 // backend/src/db/id.js -- generates the CHAR(24) primary keys every table uses.
 //
 // 24 lowercase hex characters, matching the shape the API's validation layer
-// already enforces (`objectId` in src/validation/common.js, /^[a-f0-9]{24}$/).
-// Keeping that shape is why this migration left the HTTP contract, the OpenAPI
-// spec, and the web client untouched.
+// already enforces (`identifier` in src/validation/common.js, /^[a-f0-9]{24}$/).
+// Keeping that shape means the HTTP contract, the OpenAPI spec, and the web client
+// are all driven by one id format.
 //
 // 12 random bytes = 96 bits of entropy per id, drawn from crypto.randomBytes
 // (a CSPRNG), so ids are unguessable and collisions are not a practical concern:

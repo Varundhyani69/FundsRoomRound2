@@ -1,12 +1,10 @@
-// backend/src/db/mappers.js -- turns flat JOIN result rows into the nested objects the
-// controllers already expect.
+// backend/src/db/mappers.js -- turns flat JOIN result rows into the nested API response
+// objects each controller returns directly.
 //
-// Why this file exists: the controllers were written against Mongoose documents whose
-// references had been `.populate()`d, so they read `record.item.category.name` and
-// `String(record._id)`. A SQL JOIN instead returns one flat row with columns like
-// `item_code` and `category_name`. Rebuilding the nested shape here -- including the `_id`
-// key names -- means the six controllers, and therefore every HTTP response body and the
-// OpenAPI spec, are byte-for-byte unchanged by the migration to MySQL.
+// Why this file exists: a SQL JOIN returns one flat row with columns like `item_code` and
+// `category_name`. Rebuilding the nested response shape here isolates the SQL aliasing
+// convention from controllers: each controller returns the mapper output without further
+// transformation.
 //
 // Naming convention these mappers rely on: every JOINed SELECT aliases its columns as
 // `<relation>_<field>`, e.g. `i.code AS item_code`, `c.name AS category_name`. The mappers
@@ -19,15 +17,15 @@
 
 const { availableQuantity } = require('../services/availability');
 
-/** `{ _id, name }` from `category_*` columns. */
+/** `{ id, name }` from `category_*` columns. */
 function toCategory(row) {
-    return { _id: row.category_id, name: row.category_name };
+    return { id: row.category_id, name: row.category_name };
 }
 
-/** `{ _id, code, name, category }` from `item_*` and `category_*` columns. */
+/** `{ id, code, name, category }` from `item_*` and `category_*` columns. */
 function toItem(row) {
     return {
-        _id: row.item_id,
+        id: row.item_id,
         code: row.item_code,
         name: row.item_name,
         category: toCategory(row),
@@ -35,45 +33,41 @@ function toItem(row) {
 }
 
 /**
- * `{ _id, code, name }` from `<prefix>_*` columns.
+ * `{ id, code, name }` from `<prefix>_*` columns.
  *
  * Prefixed because a transfer row carries two locations at once
  * (`source_location_*` and `destination_location_*`), so the caller names which.
  */
 function toLocation(row, prefix = 'location') {
     return {
-        _id: row[`${prefix}_id`],
+        id: row[`${prefix}_id`],
         code: row[`${prefix}_code`],
         name: row[`${prefix}_name`],
     };
 }
 
-/** `{ _id, email, role }` from `assigned_user_*` columns. Never carries password_hash. */
+/** `{ id, email, role }` from `assigned_user_*` columns. Never carries password_hash. */
 function toAssignedUser(row) {
     return {
-        _id: row.assigned_user_id,
+        id: row.assigned_user_id,
         email: row.assigned_user_email,
         role: row.assigned_user_role,
     };
 }
 
 /**
- * One inventory_records JOIN row, shaped like the populated Mongoose document the
- * inventory controller reads.
+ * One inventory_records JOIN row, shaped as the final API response object.
  *
- * `availableQuantity` is attached as a plain property here where the Mongoose model
- * exposed it as a virtual; either way it is derived, never stored (Req 3.3).
+ * `availableQuantity` is derived, never stored (Req 3.3).
  */
 function toInventoryRecord(row) {
     const record = {
-        _id: row.id,
+        id: row.id,
         item: toItem(row),
         location: toLocation(row),
         batch: row.batch,
         physicalQuantity: row.physical_quantity,
         reservedQuantity: row.reserved_quantity,
-        createdAt: row.created_at,
-        updatedAt: row.updated_at,
     };
     record.availableQuantity = availableQuantity(record);
     return record;
@@ -86,7 +80,7 @@ function toInventoryRecord(row) {
  */
 function toWorkOrder(row) {
     return {
-        _id: row.id,
+        id: row.id,
         location: toLocation(row),
         item: toItem(row),
         requiredQuantity: row.required_quantity,
@@ -94,14 +88,13 @@ function toWorkOrder(row) {
         status: row.status,
         statusChangedAt: row.status_changed_at,
         createdAt: row.created_at,
-        updatedAt: row.updated_at,
     };
 }
 
 /** One internal_transfers JOIN row, carrying both of its locations. */
 function toInternalTransfer(row) {
     return {
-        _id: row.id,
+        id: row.id,
         item: toItem(row),
         batch: row.batch,
         sourceLocation: toLocation(row, 'source_location'),
@@ -118,10 +111,8 @@ function toInternalTransfer(row) {
 /**
  * One customer_order_reservations row.
  *
- * Under MongoDB these were an embedded array on the order document, so they had no ids of
- * their own and the controller never read one. They are a child table now, but this mapper
- * deliberately exposes only the four business fields the API already returned -- adding
- * `_id` here would change a documented response shape for no caller's benefit.
+ * Reservations are stored as a child table but this mapper exposes only the four business
+ * fields the API returns -- item id, location id, batch, and quantity.
  */
 function toReservation(row) {
     return {
@@ -140,7 +131,7 @@ function toReservation(row) {
  */
 function toCustomerOrder(row, reservationRows = []) {
     return {
-        _id: row.id,
+        id: row.id,
         customerName: row.customer_name,
         item: toItem(row),
         location: toLocation(row),
@@ -148,13 +139,12 @@ function toCustomerOrder(row, reservationRows = []) {
         status: row.status,
         reservations: reservationRows.map(toReservation),
         createdAt: row.created_at,
-        updatedAt: row.updated_at,
     };
 }
 
 /** One users row for the reference list: id, email, role only (Req 1.1). */
 function toUserRef(row) {
-    return { _id: row.id, email: row.email, role: row.role };
+    return { id: row.id, email: row.email, role: row.role };
 }
 
 module.exports = {

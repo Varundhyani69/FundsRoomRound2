@@ -202,7 +202,7 @@ const {
     FIXTURE_INVENTORY_RECORDS,
     tokenFor,
 } = require('../setup/seedFixture');
-const { genRole, genMalformedId, genUnusedObjectId } = require('../setup/generators');
+const { genRole, genMalformedId, genUnusedId } = require('../setup/generators');
 
 // Feature: mini-operations-erp, Property 17: Sessions and retries are bounded
 describe('Property 17: Sessions and retries are bounded', () => {
@@ -290,7 +290,7 @@ describe('Property 17: Sessions and retries are bounded', () => {
         const genRequestKind = fc.oneof(
             fc.constant({ kind: 'createValid' }),
             fc.constant({ kind: 'validationFailure' }),
-            genUnusedObjectId.map((id) => ({ kind: 'notFound', id })),
+            genUnusedId.map((id) => ({ kind: 'notFound', id })),
             fc.constant({ kind: 'insufficientPhysical' })
         );
         const genMix = fc.array(genRequestKind, { minLength: 3, maxLength: 6 });
@@ -384,7 +384,7 @@ describe('Property 15: Every rejected request answers from the declared code tab
         let counter = 0;
 
         await fc.assert(
-            fc.asyncProperty(genUnusedObjectId, async (unknownLocationId) => {
+            fc.asyncProperty(genUnusedId, async (unknownLocationId) => {
                 const before = await InventoryRecord.find({}).sort({ _id: 1 }).lean();
 
                 const response = await agent()

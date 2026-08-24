@@ -6,7 +6,7 @@
 // for inventory and work orders (Req 9.1).
 
 const { z } = require('zod');
-const { objectId, batch, validQuantity } = require('./common');
+const { identifier, batch, validQuantity } = require('./common');
 
 const TRANSFER_STATUSES = ['Requested', 'Dispatched', 'Received'];
 
@@ -17,17 +17,17 @@ const TRANSFER_STATUSES = ['Requested', 'Dispatched', 'Received'];
  */
 const createTransferBody = z
     .object({
-        item: objectId,
+        item: identifier,
         batch,
-        sourceLocation: objectId,
-        destinationLocation: objectId,
+        sourceLocation: identifier,
+        destinationLocation: identifier,
         quantity: validQuantity,
     })
     .strict();
 
 /** POST /api/transfers/:id/dispatch and /:id/receive path param. */
 const transferIdParams = z.object({
-    id: objectId,
+    id: identifier,
 });
 
 /**

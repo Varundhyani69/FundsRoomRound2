@@ -78,11 +78,7 @@ async function listLocations(req, res, next) {
 async function listUsers(req, res, next) {
     try {
         const rows = await query('SELECT id, email, role FROM users ORDER BY email');
-        return res.status(200).json(rows.map(toUserRef).map((user) => ({
-            id: user._id,
-            email: user.email,
-            role: user.role,
-        })));
+        return res.status(200).json(rows.map(toUserRef));
     } catch (error) {
         return next(error);
     }

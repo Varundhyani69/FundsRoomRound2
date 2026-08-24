@@ -10,7 +10,7 @@
 const fc = require('fast-check');
 
 const HEX_CHARS = '0123456789abcdef';
-const OBJECT_ID_PATTERN = /^[a-f0-9]{24}$/i;
+const IDENTIFIER_PATTERN = /^[a-f0-9]{24}$/i;
 
 // The fixture's fixed ids (backend/tests/setup/seedFixture.js) all share the same 21-zero
 // prefix, e.g. '000000000000000000000a01'. Filtering that prefix out of a random 24-hex
@@ -134,14 +134,14 @@ const genOperation = fc.oneof(...Object.values(OPERATION_GENERATORS));
 
 const genOperationSequence = fc.array(genOperation, { minLength: 1, maxLength: 20 });
 
-// --- genUnusedObjectId ---------------------------------------------------------------
+// --- genUnusedId ---------------------------------------------------------------
 // A well-formed 24-character hex id guaranteed not to collide with a fixture id. Random
 // 24-hex collision with a specific id is already negligible (1 in 16^24); excluding the
 // fixture's fixed prefix makes it impossible instead of merely negligible, at no extra
 // cost.
 const genHexChar = fc.constantFrom(...HEX_CHARS.split(''));
 
-const genUnusedObjectId = fc
+const genUnusedId = fc
     .stringOf(genHexChar, { minLength: 24, maxLength: 24 })
     .filter((id) => !id.startsWith(FIXTURE_ID_PREFIX));
 
@@ -159,7 +159,7 @@ const genMalformedId = fc.oneof(
     fc.stringOf(genHexChar, { minLength: 25, maxLength: 25 }),
     fc.stringOf(genNonHexChar, { minLength: 24, maxLength: 24 }),
     fc.constant(''),
-    fc.string().filter((s) => !OBJECT_ID_PATTERN.test(s))
+    fc.string().filter((s) => !IDENTIFIER_PATTERN.test(s))
 );
 
 // --- genRole -----------------------------------------------------------------------
@@ -203,11 +203,11 @@ module.exports = {
     genRecordLayout,
     OPERATION_GENERATORS,
     genOperationSequence,
-    genUnusedObjectId,
+    genUnusedId,
     genMalformedId,
     genRole,
     genConcurrentQuantities,
     // Exported for reuse by tests that need "just an id shape" without the
     // fixture-collision-avoidance filter (e.g. building a second unrelated id).
-    OBJECT_ID_PATTERN,
+    IDENTIFIER_PATTERN,
 };

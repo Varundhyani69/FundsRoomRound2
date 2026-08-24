@@ -1,12 +1,10 @@
 // backend/src/db/connect.js -- opens the MySQL pool and verifies the deployment can
 // actually do what this application needs before the port is bound (Req 8.1, 8.6).
 //
-// The MongoDB version of this file had to check for a replica set, because
-// multi-document transactions were unavailable on a standalone server. MySQL needs
-// no such deployment shape -- InnoDB gives transactions on a single ordinary server
-// -- so that entire class of setup friction is gone. What is worth checking instead
-// is that the tables are actually InnoDB: on MyISAM every BEGIN/COMMIT would be
-// silently ignored and every guarantee in this codebase would quietly evaporate.
+// InnoDB gives transactions on a single ordinary server with no special deployment
+// shape required. What is worth checking is that the tables are actually InnoDB: on
+// MyISAM every BEGIN/COMMIT would be silently ignored and every guarantee in this
+// codebase would quietly evaporate.
 
 const { getPool, closePool, query } = require('./pool');
 

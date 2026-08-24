@@ -348,7 +348,7 @@ async function seedInventoryRecords(items, locations) {
                             batch,
                             physicalQuantity,
                         })
-                    )._id
+                    ).id
                 );
 
         records.set(`${itemCode}:${locationCode}:${batch}`, id);
@@ -399,7 +399,7 @@ async function seedWorkOrders(items, locations, users) {
                             assignedUser: assignedUserId,
                             createdBy: adminId,
                         })
-                    )._id
+                    ).id
                 );
 
         workOrders.set(`${itemCode}:${locationCode}:${requiredQuantity}`, id);

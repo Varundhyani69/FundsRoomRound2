@@ -6,8 +6,7 @@
 // read and write on it:
 //     await withTransaction(async (tx) => { ... tx.query(...) ... })
 // A query issued against the pool instead of `tx` runs OUTSIDE the transaction and
-// is neither rolled back on failure nor re-read on a retry -- the same trap the
-// MongoDB version of this file had with sessions.
+// is neither rolled back on failure nor re-read on a retry.
 //
 // Why a connection per transaction: in MySQL, BEGIN/COMMIT/ROLLBACK are connection
 // state, not call parameters. Two concurrent requests sharing one connection would

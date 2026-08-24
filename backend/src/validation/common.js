@@ -39,8 +39,8 @@ function readMarker(message) {
 
 // --- building blocks ----------------------------------------------------------
 
-const OBJECT_ID_PATTERN = /^[a-f0-9]{24}$/i;
-const OBJECT_ID_REASON = reasonFor(
+const IDENTIFIER_PATTERN = /^[a-f0-9]{24}$/i;
+const IDENTIFIER_REASON = reasonFor(
     'INVALID_IDENTIFIER',
     'must be a 24-character hexadecimal identifier'
 );
@@ -50,12 +50,12 @@ const OBJECT_ID_REASON = reasonFor(
  * A malformed value is reported as INVALID_IDENTIFIER; an omitted one stays a
  * plain presence failure, so a missing field is still a VALIDATION_ERROR.
  */
-const objectId = z
+const identifier = z
     .string({
         required_error: 'is required',
-        invalid_type_error: OBJECT_ID_REASON,
+        invalid_type_error: IDENTIFIER_REASON,
     })
-    .regex(OBJECT_ID_PATTERN, OBJECT_ID_REASON);
+    .regex(IDENTIFIER_PATTERN, IDENTIFIER_REASON);
 
 const QUANTITY_MAX = 1_000_000;
 const QUANTITY_REASON = reasonFor(
@@ -97,12 +97,12 @@ const customerName = z
     .max(120, 'must be at most 120 characters');
 
 module.exports = {
-    objectId,
+    identifier,
     validQuantity,
     batch,
     customerName,
     reasonFor,
     readMarker,
-    OBJECT_ID_PATTERN,
+    IDENTIFIER_PATTERN,
     QUANTITY_MAX,
 };

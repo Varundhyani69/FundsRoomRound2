@@ -6,7 +6,7 @@
 // (Req 9.1).
 
 const { z } = require('zod');
-const { objectId, validQuantity, customerName } = require('./common');
+const { identifier, validQuantity, customerName } = require('./common');
 
 const ORDER_STATUSES = ['Reserved', 'Cancelled'];
 
@@ -19,15 +19,15 @@ const ORDER_STATUSES = ['Reserved', 'Cancelled'];
 const createOrderBody = z
     .object({
         customerName,
-        item: objectId,
-        location: objectId,
+        item: identifier,
+        location: identifier,
         quantity: validQuantity,
     })
     .strict();
 
 /** GET /api/orders/:id path param (Req 9.10). */
 const orderIdParams = z.object({
-    id: objectId,
+    id: identifier,
 });
 
 /** GET /api/orders query: status filter optional. */

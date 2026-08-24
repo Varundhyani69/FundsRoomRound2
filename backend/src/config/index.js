@@ -5,11 +5,10 @@ require('dotenv').config();
 // the port is bound (Req 10.1). No defaults are applied (Req 10.3), and no decision
 // depends on host name, file path, or OS value (Req 10.5).
 //
-// The four MYSQL_* names replace the single MONGODB_URI this project used before
-// migrating to MySQL. They are kept as separate variables rather than one
-// connection URL because that is the shape every managed MySQL host hands you --
-// AWS RDS shows an endpoint, a port, a user and a database name on separate
-// fields, so a deployment copies them across without having to assemble a URL.
+// The four MYSQL_* names are kept as separate variables rather than one connection
+// URL because that is the shape every managed MySQL host hands you -- AWS RDS shows
+// an endpoint, a port, a user and a database name on separate fields, so a
+// deployment copies them across without having to assemble a URL.
 const REQUIRED = [
     'MYSQL_HOST',
     'MYSQL_PORT',

@@ -28,7 +28,7 @@ const TRANSFER_STEPS = Object.freeze(['DISPATCH', 'RECEIPT']);
  * Uniqueness gives exactly one opening row per record: a record cannot be given a second
  * opening balance (Req 4.9).
  *
- * @param {string|import('mongoose').Types.ObjectId} recordId the new Inventory_Record id
+ * @param {string} recordId the new Inventory_Record id
  * @returns {string} e.g. `INVENTORY:6512...ab:OPENING`
  */
 const openingMovementReference = (recordId) => `INVENTORY:${recordId}:OPENING`;
@@ -41,7 +41,7 @@ const openingMovementReference = (recordId) => `INVENTORY:${recordId}:OPENING`;
  * the same record, while leaving the same client reference usable on a different record
  * (Req 4.6).
  *
- * @param {string|import('mongoose').Types.ObjectId} recordId the adjusted Inventory_Record id
+ * @param {string} recordId the adjusted Inventory_Record id
  * @param {string} clientRef the `movementReference` from the request body
  * @returns {string} e.g. `ADJUST:6512...ab:stock-count-2024-05`
  */
@@ -58,7 +58,7 @@ const adjustMovementReference = (recordId, clientRef) => `ADJUST:${recordId}:${c
  * happily accepts, silently allowing the same step twice. Failing here makes that a caller
  * bug rather than a data bug.
  *
- * @param {string|import('mongoose').Types.ObjectId} transferId the Internal_Transfer id
+ * @param {string} transferId the Internal_Transfer id
  * @param {'DISPATCH'|'RECEIPT'} step the lifecycle step being applied
  * @returns {string} e.g. `TRANSFER:6512...ab:DISPATCH`
  * @throws {Error} when `step` is not one of the two permitted values
@@ -82,8 +82,8 @@ const transferMovementReference = (transferId, step) => {
  * as well as the order id: one row per record consumed, and a replay of the order is
  * rejected per record (Req 7.1).
  *
- * @param {string|import('mongoose').Types.ObjectId} orderId the Customer_Order id
- * @param {string|import('mongoose').Types.ObjectId} recordId the reserved Inventory_Record id
+ * @param {string} orderId the Customer_Order id
+ * @param {string} recordId the reserved Inventory_Record id
  * @returns {string} e.g. `ORDER:6512...ab:RESERVE:6512...cd`
  */
 const reserveMovementReference = (orderId, recordId) =>
