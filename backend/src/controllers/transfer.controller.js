@@ -1,17 +1,8 @@
-// backend/src/controllers/transfer.controller.js
-// The internal transfer route handlers: list, create, dispatch, and receive. Like every
-// controller, each handler reads only `req.validated` and `req.user` -- never raw
-// `req.body` / `req.params` / `req.query` -- and holds no quantity or status comparison of
-// its own; every guard and every write lives in src/services/transfer.service.js (Req 15.5).
+// Transfer controller: list, create, dispatch, and receive handlers for internal transfers.
 
 const transferService = require('../services/transfer.service');
 
-/**
- * GET /api/transfers
- * 200 [{ id, item, batch, sourceLocation, destinationLocation, quantity, receivedQuantity,
- *        status, createdAt, dispatchedAt, receivedAt }]
- * 401 UNAUTHENTICATED
- */
+/** GET /api/transfers */
 async function listTransfers(req, res, next) {
     const { status } = req.validated.query;
 
@@ -19,19 +10,12 @@ async function listTransfers(req, res, next) {
         const transfers = await transferService.listTransfers({ status });
         return res.status(200).json(transfers);
     } catch (error) {
-        // Express 4 does not observe a rejected promise, so the error is handed to
-        // next() explicitly: errorHandler stays the only place that writes an
-        // error response (Req 9.5).
+        // Express 4 does not observe a rejected promise
         return next(error);
     }
 }
 
-/**
- * POST /api/transfers
- * 201 single object as above
- * 400 VALIDATION_ERROR / INVALID_QUANTITY / INVALID_REFERENCE / SAME_LOCATION_TRANSFER
- * 403 FORBIDDEN (raised by authorize() before this runs)
- */
+/** POST /api/transfers */
 async function createTransfer(req, res, next) {
     const { item, batch, sourceLocation, destinationLocation, quantity } = req.validated.body;
 
@@ -49,14 +33,7 @@ async function createTransfer(req, res, next) {
     }
 }
 
-/**
- * POST /api/transfers/:id/dispatch
- * 200 single object as above
- * 400 INVALID_IDENTIFIER
- * 403 FORBIDDEN
- * 404 NOT_FOUND
- * 409 INVALID_STATUS_TRANSITION / INSUFFICIENT_AVAILABLE_QUANTITY
- */
+/** POST /api/transfers/:id/dispatch */
 async function dispatchTransfer(req, res, next) {
     const { id } = req.validated.params;
 
@@ -68,14 +45,7 @@ async function dispatchTransfer(req, res, next) {
     }
 }
 
-/**
- * POST /api/transfers/:id/receive
- * 200 single object as above
- * 400 INVALID_IDENTIFIER
- * 403 FORBIDDEN
- * 404 NOT_FOUND
- * 409 INVALID_STATUS_TRANSITION / TRANSFER_ALREADY_RECEIVED
- */
+/** POST /api/transfers/:id/receive */
 async function receiveTransfer(req, res, next) {
     const { id } = req.validated.params;
 

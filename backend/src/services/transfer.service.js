@@ -1,16 +1,5 @@
-// backend/src/services/transfer.service.js -- the Transfer_Service: the Internal_Transfer
-// lifecycle Requested -> Dispatched -> Received, and the two inventory movements that
-// lifecycle causes (Req 6.1-6.16, 15.2, 15.5).
-//
-// The rule the brief is most specific about is where stock is visible mid-flight: a dispatch
-// reduces the SOURCE only, and the DESTINATION is not increased until receipt, so units in
-// transit appear at neither end. That is why dispatch and receive are two separate
-// transactions writing two separate ledger rows, rather than one transfer operation
-// (Req 6.3, 6.6, 6.7).
-//
-// Every quantity comparison and every status comparison in this file goes through a named
-// guard (`assertDifferentLocations`, `assertTransferTransition`) rather than being inlined,
-// so the rules are readable in one place and controllers hold none of them (Req 15.5).
+// Transfer service: the Internal_Transfer lifecycle Requested → Dispatched → Received.
+// Dispatch reduces the source; destination is not increased until receipt (units vanish mid-flight).
 
 const AppError = require('../errors/AppError');
 const ERROR_CODES = require('../errors/errorCodes');
@@ -21,8 +10,6 @@ const { toInternalTransfer } = require('../db/mappers');
 const { availableQuantity } = require('./availability');
 const { applyMovement, isDuplicateKey } = require('./inventory.service');
 const { transferMovementReference } = require('./movementReference');
-
-// --- error builders -------------------------------------------------------------------
 
 const invalidReference = () =>
     new AppError(
@@ -62,40 +49,22 @@ const insufficientAvailableQuantity = () =>
         'The source location does not have enough available quantity for this transfer.'
     );
 
-// --- guards ----------------------------------------------------------------------------
-
-/**
- * Req 6.2: the two endpoints of a transfer must differ. The schema carries the same rule as a
- * CHECK constraint, but this guard runs first so the caller gets a 400 with a specific code
- * rather than a constraint violation.
- *
- * @throws {AppError} 400 SAME_LOCATION_TRANSFER
- */
+/** Source and destination must differ. */
 function assertDifferentLocations(sourceLocation, destinationLocation) {
     if (String(sourceLocation) === String(destinationLocation)) {
         throw sameLocationTransfer();
     }
 }
 
-// The one Transfer_Status transition rule, expressed as "target -> its one legal
-// predecessor" (Req 6.10). `Requested` has no entry: nothing transitions into it, it is only
-// ever the default at creation.
+// Status transition rule: target → its one legal predecessor.
 const LEGAL_PREDECESSOR = {
     Dispatched: 'Requested',
     Received: 'Dispatched',
 };
 
 /**
- * The named guard that decides whether a dispatch or receipt reaching a Transfer_Status is
- * legal (Req 6.10).
- *
- * The one carve-out is Req 6.9: a receipt against a transfer that already holds `Received` is
- * reported as the business-meaningful `TRANSFER_ALREADY_RECEIVED` rather than the generic
- * `INVALID_STATUS_TRANSITION`, which is what makes a second, concurrent, or replayed receipt
- * read as "already done" to the caller instead of merely "invalid" (Req 6.9, 6.16). Every
- * other illegal pairing falls through to `INVALID_STATUS_TRANSITION`.
- *
- * @throws {AppError} 409 TRANSFER_ALREADY_RECEIVED or 409 INVALID_STATUS_TRANSITION
+ * Guard for transfer status transitions.
+ * An already-Received transfer reports TRANSFER_ALREADY_RECEIVED rather than generic invalid.
  */
 function assertTransferTransition(currentStatus, targetStatus) {
     if (targetStatus === 'Received' && currentStatus === 'Received') {
@@ -106,11 +75,7 @@ function assertTransferTransition(currentStatus, targetStatus) {
     }
 }
 
-// --- reads -----------------------------------------------------------------------------
-
-// The JOIN every transfer read shares. Both locations are joined separately and aliased with
-// `source_location_*` / `destination_location_*` prefixes, which is what lets one flat row
-// carry two locations for src/db/mappers.js to rebuild (Req 6.1).
+/** Shared SELECT for populated transfer reads. */
 const TRANSFER_SELECT = `
     SELECT t.id, t.batch, t.quantity, t.received_quantity, t.status,
            t.created_at, t.dispatched_at, t.received_at,
@@ -124,18 +89,13 @@ const TRANSFER_SELECT = `
       JOIN locations sl ON sl.id = t.source_location_id
       JOIN locations dl ON dl.id = t.destination_location_id`;
 
-/** Reads one transfer in the populated response shape, or null when absent. */
+/** Reads one transfer in the populated response shape, or null. */
 async function findTransferById(id) {
     const rows = await query(`${TRANSFER_SELECT} WHERE t.id = ?`, [id]);
     return rows.length > 0 ? toInternalTransfer(rows[0]) : null;
 }
 
-/**
- * Lists Internal_Transfers, optionally filtered by status (Req 6.1).
- *
- * @param {{ status?: string }} [filters]
- * @returns {Promise<object[]>}
- */
+/** Lists transfers, optionally filtered by status. */
 async function listTransfers({ status } = {}) {
     const where = status ? ' WHERE t.status = ?' : '';
     const params = status ? [status] : [];
@@ -146,16 +106,7 @@ async function listTransfers({ status } = {}) {
     return rows.map(toInternalTransfer);
 }
 
-// --- writes ----------------------------------------------------------------------------
-
-/**
- * Creates an Internal_Transfer with Transfer_Status `Requested` (Req 6.1). No inventory write
- * happens here: stock only moves on dispatch and receipt (Req 6.3).
- *
- * @param {{ item: string, batch: string, sourceLocation: string, destinationLocation: string, quantity: number, createdBy?: string|null }} input
- * @returns {Promise<object>} the created transfer in the populated response shape
- * @throws {AppError} 400 SAME_LOCATION_TRANSFER; 400 INVALID_REFERENCE
- */
+/** Creates an Internal_Transfer in Requested status. No inventory write happens here. */
 async function createTransfer({
     item,
     batch,
@@ -164,12 +115,8 @@ async function createTransfer({
     quantity,
     createdBy = null,
 }) {
-    // Checked before any existence lookup, so an obviously nonsensical transfer costs no
-    // queries.
     assertDifferentLocations(sourceLocation, destinationLocation);
 
-    // Trimmed to match how inventory_records.batch is stored and compared (Req 3.1, 3.6), so
-    // a batch differing only by surrounding whitespace still finds the source record.
     const trimmedBatch = typeof batch === 'string' ? batch.trim() : batch;
 
     const refRows = await query(
@@ -186,8 +133,7 @@ async function createTransfer({
     if (row.itemCount !== 1 || row.sourceCount !== 1 || row.destinationCount !== 1) {
         throw invalidReference();
     }
-    // A batch that does not exist at the source is an invalid reference, not an availability
-    // problem: there is nothing to dispatch regardless of quantity (Req 6.14).
+    // A batch that doesn't exist at the source is an invalid reference, not an availability issue.
     if (row.sourceRecordCount !== 1) {
         throw invalidReference();
     }
@@ -204,25 +150,9 @@ async function createTransfer({
     return findTransferById(id);
 }
 
-/**
- * Dispatches an Internal_Transfer: reduces the source record's physical quantity by the
- * transfer quantity, writes one ledger row, and advances the status to `Dispatched`
- * (Req 6.4). The destination is deliberately untouched (Req 6.3).
- *
- * The availability check happens here, against a read taken inside this transaction, rather
- * than letting `applyMovement`'s generic guard selection choose the code: Req 6.5 requires
- * `INSUFFICIENT_AVAILABLE_QUANTITY` specifically, including when no source record exists at
- * all (availability is then 0), whereas the generic guard would report
- * `INSUFFICIENT_PHYSICAL_QUANTITY` for a quantity exceeding both.
- *
- * @param {string} transferId
- * @returns {Promise<object>} the updated transfer
- * @throws {AppError} 404 NOT_FOUND; 409 INVALID_STATUS_TRANSITION; 409 INSUFFICIENT_AVAILABLE_QUANTITY
- */
+/** Dispatches a transfer: reduces source physical quantity and advances status to Dispatched. */
 async function dispatchTransfer(transferId) {
     await withTransaction(async (tx) => {
-        // FOR UPDATE locks the transfer row, so two concurrent dispatches of the same
-        // transfer are serialised and the second sees the first's committed status.
         const [transferRows] = await tx.query(
             `SELECT id, item_id, batch, source_location_id, quantity, status
                FROM internal_transfers WHERE id = ? FOR UPDATE`,
@@ -242,7 +172,6 @@ async function dispatchTransfer(transferId) {
             [transfer.item_id, transfer.source_location_id, transfer.batch]
         );
 
-        // No source record at all means availability is 0 (Req 6.5's explicit clause).
         const available =
             sourceRows.length > 0
                 ? availableQuantity({
@@ -280,25 +209,7 @@ async function dispatchTransfer(transferId) {
     return findTransferById(transferId);
 }
 
-/**
- * Receives an Internal_Transfer: increases the destination record's physical quantity --
- * creating that record first if it does not yet exist -- writes one ledger row, sets
- * received_quantity, and advances the status to `Received` (Req 6.7, 6.8).
- *
- * The destination record is created inside THIS transaction rather than by calling
- * `createInventoryRecord` (which would open its own), because Req 6.8 requires the creation
- * and the receipt to commit together.
- *
- * Idempotence (Req 6.9, 6.12, 6.16): a receipt against an already-`Received` transfer is
- * rejected by the guard before any write. If two receipts race past that check, the UNIQUE
- * index on movement_reference lets at most one `RECEIPT` ledger row exist; the loser's
- * `applyMovement` fails with DUPLICATE_INVENTORY_TRANSACTION, remapped here to
- * TRANSFER_ALREADY_RECEIVED because that is the business-meaningful code for this path.
- *
- * @param {string} transferId
- * @returns {Promise<object>} the updated transfer
- * @throws {AppError} 404 NOT_FOUND; 409 TRANSFER_ALREADY_RECEIVED; 409 INVALID_STATUS_TRANSITION
- */
+/** Receives a transfer: increases destination physical quantity (creating the record if needed). */
 async function receiveTransfer(transferId) {
     await withTransaction(async (tx) => {
         const [transferRows] = await tx.query(
@@ -313,7 +224,6 @@ async function receiveTransfer(transferId) {
 
         assertTransferTransition(transfer.status, 'Received');
 
-        // Find or create the destination record, inside this transaction (Req 6.8).
         const [destRows] = await tx.query(
             `SELECT id FROM inventory_records
               WHERE item_id = ? AND location_id = ? AND batch = ? FOR UPDATE`,
@@ -326,10 +236,7 @@ async function receiveTransfer(transferId) {
         } else {
             destinationRecordId = newId();
             try {
-                // Created at 0 and then moved by applyMovement below, rather than created
-                // with the received quantity directly: that keeps every unit of stock
-                // traceable to a ledger row, so the balances stay reconstructible from the
-                // ledger alone (Req 4.7).
+                // Created at 0 then moved by applyMovement, keeping every unit traceable to a ledger row.
                 await tx.query(
                     `INSERT INTO inventory_records
                          (id, item_id, location_id, batch, physical_quantity, reserved_quantity)
@@ -342,12 +249,10 @@ async function receiveTransfer(transferId) {
                     ]
                 );
             } catch (error) {
-                // A concurrent receipt created the same destination record first. Re-read it
-                // rather than failing: both receipts are trying to reach the same state, and
-                // the movement_reference index below decides which one actually applies.
                 if (!isDuplicateKey(error)) {
                     throw error;
                 }
+                // Concurrent receipt created it first — re-read rather than failing.
                 const [raceRows] = await tx.query(
                     `SELECT id FROM inventory_records
                       WHERE item_id = ? AND location_id = ? AND batch = ?`,
@@ -368,7 +273,6 @@ async function receiveTransfer(transferId) {
                 tx
             );
         } catch (error) {
-            // The losing side of a concurrent receipt (Req 6.9, 6.16).
             if (error.code === 'DUPLICATE_INVENTORY_TRANSACTION') {
                 throw transferAlreadyReceived();
             }
@@ -389,13 +293,10 @@ async function receiveTransfer(transferId) {
 }
 
 module.exports = {
-    // guards, exported so tests exercise them directly and no caller re-implements them
     assertDifferentLocations,
     assertTransferTransition,
-    // reads
     listTransfers,
     findTransferById,
-    // writes
     createTransfer,
     dispatchTransfer,
     receiveTransfer,

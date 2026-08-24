@@ -1,17 +1,8 @@
-// backend/src/controllers/workOrder.controller.js
-// The work order route handlers: list, read one, create, and change status. Like every
-// controller, each handler reads only `req.validated` and `req.user` -- never raw
-// `req.body` / `req.params` / `req.query` -- and holds no quantity or status comparison of
-// its own; every guard and every write lives in src/services/workOrder.service.js (Req 15.5).
+// Work order controller: list, read, create, and status-change handlers.
 
 const workOrderService = require('../services/workOrder.service');
 
-/**
- * GET /api/work-orders
- * 200 [{ id, location, item, requiredQuantity, assignedUser, status, statusChangedAt,
- *        locationAvailableQuantity, shortageQuantity, createdAt }]
- * 401 UNAUTHENTICATED
- */
+/** GET /api/work-orders */
 async function listWorkOrders(req, res, next) {
     const { status, location } = req.validated.query;
 
@@ -19,19 +10,12 @@ async function listWorkOrders(req, res, next) {
         const workOrders = await workOrderService.listWorkOrders({ status, location });
         return res.status(200).json(workOrders);
     } catch (error) {
-        // Express 4 does not observe a rejected promise, so the error is handed to
-        // next() explicitly: errorHandler stays the only place that writes an
-        // error response (Req 9.5).
+        // Express 4 does not observe a rejected promise
         return next(error);
     }
 }
 
-/**
- * GET /api/work-orders/:id
- * 200 single object as above
- * 400 INVALID_IDENTIFIER
- * 404 NOT_FOUND
- */
+/** GET /api/work-orders/:id */
 async function getWorkOrder(req, res, next) {
     const { id } = req.validated.params;
 
@@ -43,12 +27,7 @@ async function getWorkOrder(req, res, next) {
     }
 }
 
-/**
- * POST /api/work-orders
- * 201 single object as above
- * 400 VALIDATION_ERROR / INVALID_QUANTITY / INVALID_REFERENCE
- * 403 FORBIDDEN (raised by authorize() before this runs)
- */
+/** POST /api/work-orders */
 async function createWorkOrder(req, res, next) {
     const { location, item, requiredQuantity, assignedUser } = req.validated.body;
 
@@ -60,22 +39,13 @@ async function createWorkOrder(req, res, next) {
             assignedUser,
             createdBy: req.user.id,
         });
-        // createWorkOrder's own return value already carries shortage annotation via
-        // getWorkOrder internally, so it is the full response shape.
         return res.status(201).json(created);
     } catch (error) {
         return next(error);
     }
 }
 
-/**
- * PATCH /api/work-orders/:id/status
- * 200 { id, status, statusChangedAt }
- * 400 VALIDATION_ERROR / INVALID_IDENTIFIER
- * 403 FORBIDDEN
- * 404 NOT_FOUND
- * 409 INVALID_STATUS_TRANSITION
- */
+/** PATCH /api/work-orders/:id/status */
 async function changeWorkOrderStatus(req, res, next) {
     const { id } = req.validated.params;
     const { status } = req.validated.body;

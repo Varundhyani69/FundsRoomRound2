@@ -1,16 +1,8 @@
-// backend/src/controllers/order.controller.js
-// The customer order route handlers: list, read one, and create. Like every
-// controller, each handler reads only `req.validated` and `req.user` -- never raw
-// `req.body` / `req.params` / `req.query` -- and holds no quantity or status comparison of
-// its own; every guard and every write lives in src/services/order.service.js (Req 15.5).
+// Order controller: list, read, and create handlers for customer orders.
 
 const orderService = require('../services/order.service');
 
-/**
- * GET /api/orders
- * 200 [{ id, customerName, item, location, quantity, status, reservations, createdAt }]
- * 401 UNAUTHENTICATED
- */
+/** GET /api/orders */
 async function listOrders(req, res, next) {
     const { status } = req.validated.query;
 
@@ -18,19 +10,12 @@ async function listOrders(req, res, next) {
         const orders = await orderService.listOrders({ status });
         return res.status(200).json(orders);
     } catch (error) {
-        // Express 4 does not observe a rejected promise, so the error is handed to
-        // next() explicitly: errorHandler stays the only place that writes an
-        // error response (Req 9.5).
+        // Express 4 does not observe a rejected promise
         return next(error);
     }
 }
 
-/**
- * GET /api/orders/:id
- * 200 single object as above
- * 400 INVALID_IDENTIFIER
- * 404 NOT_FOUND
- */
+/** GET /api/orders/:id */
 async function getOrder(req, res, next) {
     const { id } = req.validated.params;
 
@@ -42,13 +27,7 @@ async function getOrder(req, res, next) {
     }
 }
 
-/**
- * POST /api/orders
- * 201 single object as above
- * 400 VALIDATION_ERROR / INVALID_QUANTITY / INVALID_REFERENCE
- * 403 FORBIDDEN (raised by authorize() before this runs)
- * 409 INSUFFICIENT_AVAILABLE_QUANTITY / CONCURRENT_MODIFICATION
- */
+/** POST /api/orders */
 async function createOrder(req, res, next) {
     const { customerName, item, location, quantity } = req.validated.body;
 

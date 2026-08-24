@@ -1,19 +1,6 @@
-// backend/src/services/workOrder.service.js -- the Work_Order_Service: creates Work_Orders,
-// reads them with a freshly derived Shortage_Quantity, and advances Work_Order_Status through
-// one guarded transition function (Req 5.1, 5.3-5.10, 5.12, 15.5).
-//
-// There is no transaction here: creating a Work_Order is a single-row insert with no ledger
-// row to write alongside it, unlike inventory.service.js's applyMovement (Req 5.1). The
-// status change is a single conditional UPDATE, which is atomic on its own.
-//
-// Shortage_Quantity is never stored (there is no such column -- see src/db/schema.sql). It is
-// computed fresh on every read from the inventory_records current at that read, via
-// `locationAvailableQuantity` from availability.js, the single source of truth for
-// availability (Req 5.4, 15.1).
-//
-// `nextWorkOrderStatus` is the one place the Assigned -> InProgress -> Completed rule lives
-// (Req 5.8, 15.5). `changeStatus` is its only caller here, and no other module compares a
-// Work_Order_Status inline.
+// Work order service: creates work orders, reads them with a freshly derived Shortage_Quantity,
+// and advances status through one guarded transition function.
+// Shortage is never stored — it's computed from current inventory on every read.
 
 const AppError = require('../errors/AppError');
 const ERROR_CODES = require('../errors/errorCodes');
@@ -22,8 +9,6 @@ const { newId } = require('../db/id');
 const { toWorkOrder } = require('../db/mappers');
 const { locationAvailableQuantity } = require('./availability');
 
-// Built fresh per call, the same way inventory.service.js's error factories are, so each
-// thrown error carries its own stack.
 const invalidReference = () =>
     new AppError(
         ERROR_CODES.INVALID_REFERENCE,
@@ -41,33 +26,18 @@ const invalidStatusTransition = () =>
         'This status change is not the successor of the current status.'
     );
 
-// The one Work_Order_Status transition rule, expressed as "current -> its one legal
-// successor" (Req 5.8). Nothing is a legal successor of the terminal `Completed`, so it has
-// no entry and every target requested from it fails the lookup below.
+// Status transition rule: current → its one legal successor.
 const LEGAL_SUCCESSOR = {
     Assigned: 'InProgress',
     InProgress: 'Completed',
 };
 
-/**
- * The named guard that decides whether a Work_Order_Status change is legal: only the
- * immediate successor in the order `Assigned` -> `InProgress` -> `Completed` is legal.
- * Same-status, backward, skip-ahead, and any transition away from the terminal `Completed`
- * are all illegal (Req 5.9). This is the one place that rule lives; `changeStatus` below is
- * its only caller (Req 5.8, 15.5).
- *
- * @param {string} currentStatus one of 'Assigned', 'InProgress', 'Completed'
- * @param {string} targetStatus one of 'Assigned', 'InProgress', 'Completed'
- * @returns {boolean} true only when `targetStatus` is the immediate successor
- */
+/** Returns true when targetStatus is the legal successor of currentStatus. */
 function nextWorkOrderStatus(currentStatus, targetStatus) {
     return LEGAL_SUCCESSOR[currentStatus] === targetStatus;
 }
 
-// The JOIN every work order read shares, aliasing columns as `<relation>_<field>` so
-// src/db/mappers.js can rebuild the nested response shape. Declared once so create, list and
-// get cannot drift apart. `assigned_user_*` selects only email and role -- never
-// password_hash (Req 1.1).
+/** Shared SELECT for populated work order reads. */
 const WORK_ORDER_SELECT = `
     SELECT wo.id, wo.required_quantity, wo.status, wo.status_changed_at,
            wo.created_at, wo.updated_at,
@@ -81,17 +51,7 @@ const WORK_ORDER_SELECT = `
       JOIN locations l  ON l.id = wo.location_id
       JOIN users u      ON u.id = wo.assigned_user_id`;
 
-/**
- * Computes the Location_Available_Quantity and Shortage_Quantity of one Work_Order at read
- * time, treating availability as 0 when no inventory_records exist for that item and
- * location (Req 5.4, 5.5, 5.6, 5.10).
- *
- * The rows are summed in JS by `locationAvailableQuantity` rather than by SQL's SUM(), so the
- * availability rule keeps exactly one definition (Req 15.1).
- *
- * @param {{ item: { id: string }, location: { id: string }, requiredQuantity: number }} workOrder
- * @returns {Promise<{ locationAvailableQuantity: number, shortageQuantity: number }>}
- */
+/** Computes location available quantity and shortage for a work order at read time. */
 async function computeShortage(workOrder) {
     const rows = await query(
         `SELECT physical_quantity, reserved_quantity
@@ -109,12 +69,11 @@ async function computeShortage(workOrder) {
 
     return {
         locationAvailableQuantity: available,
-        // max(0, ...) so a surplus reports 0 rather than a negative shortage (Req 5.6).
         shortageQuantity: Math.max(0, workOrder.requiredQuantity - available),
     };
 }
 
-/** Reads one work order by id and attaches its derived shortage, or null when absent. */
+/** Reads one work order by id with shortage, or null when absent. */
 async function findWorkOrderById(id) {
     const rows = await query(`${WORK_ORDER_SELECT} WHERE wo.id = ?`, [id]);
     if (rows.length === 0) {
@@ -124,16 +83,8 @@ async function findWorkOrderById(id) {
     return Object.assign(workOrder, await computeShortage(workOrder));
 }
 
-/**
- * Creates a Work_Order with Work_Order_Status `Assigned` (Req 5.1).
- *
- * @param {{ location: string, item: string, requiredQuantity: number, assignedUser: string, createdBy?: string|null }} input
- * @returns {Promise<object>} the created work order in the populated response shape
- * @throws {AppError} 400 INVALID_REFERENCE when location, item, or assignedUser is absent
- */
+/** Creates a work order in Assigned status. */
 async function createWorkOrder({ location, item, requiredQuantity, assignedUser, createdBy = null }) {
-    // All three references are checked in one round trip so the caller gets
-    // INVALID_REFERENCE (400) rather than a raw foreign key failure (Req 5.3).
     const refRows = await query(
         `SELECT
              (SELECT COUNT(*) FROM locations WHERE id = ?) AS locationCount,
@@ -157,13 +108,7 @@ async function createWorkOrder({ location, item, requiredQuantity, assignedUser,
     return findWorkOrderById(id);
 }
 
-/**
- * Lists Work_Orders, optionally filtered by status and/or location, each with its freshly
- * derived Location_Available_Quantity and Shortage_Quantity (Req 5.4).
- *
- * @param {{ status?: string, location?: string }} [filters]
- * @returns {Promise<object[]>}
- */
+/** Lists work orders with freshly computed shortage, optionally filtered by status/location. */
 async function listWorkOrders({ status, location } = {}) {
     const conditions = [];
     const params = [];
@@ -178,14 +123,11 @@ async function listWorkOrders({ status, location } = {}) {
     }
 
     const where = conditions.length > 0 ? ` WHERE ${conditions.join(' AND ')}` : '';
-    // Newest first, so a list response is stable across calls rather than in storage order.
     const rows = await query(
         `${WORK_ORDER_SELECT}${where} ORDER BY wo.created_at DESC, wo.id`,
         params
     );
 
-    // The shortage of each row needs its own availability read, so these run together rather
-    // than strictly in sequence.
     return Promise.all(
         rows.map(async (row) => {
             const workOrder = toWorkOrder(row);
@@ -195,10 +137,7 @@ async function listWorkOrders({ status, location } = {}) {
 }
 
 /**
- * Reads one Work_Order with its freshly derived shortage (Req 5.4).
- *
- * @param {string} id
- * @returns {Promise<object>}
+ * Reads one work order with shortage.
  * @throws {AppError} 404 NOT_FOUND
  */
 async function getWorkOrder(id) {
@@ -210,17 +149,7 @@ async function getWorkOrder(id) {
 }
 
 /**
- * Advances a Work_Order's status through the one guarded transition function
- * (`nextWorkOrderStatus`), recording `status_changed_at` on success (Req 5.7, 5.8, 5.9).
- *
- * The UPDATE carries `AND status = ?` so the row is only written while it still holds the
- * status the guard was evaluated against. Two concurrent requests to advance the same work
- * order therefore cannot both succeed: the second matches zero rows and is reported as an
- * illegal transition, which is what it has become.
- *
- * @param {{ id: string, targetStatus: string }} input
- * @returns {Promise<object>} the updated work order
- * @throws {AppError} 404 NOT_FOUND; 409 INVALID_STATUS_TRANSITION
+ * Advances work order status. The UPDATE carries AND status = ? so concurrent advances cannot both succeed.
  */
 async function changeStatus({ id, targetStatus }) {
     const currentRows = await query('SELECT status FROM work_orders WHERE id = ?', [id]);
@@ -241,8 +170,6 @@ async function changeStatus({ id, targetStatus }) {
     );
 
     if (result.affectedRows !== 1) {
-        // Another request advanced it between the read and this write, so the transition the
-        // guard approved is no longer the one being asked for.
         throw invalidStatusTransition();
     }
 
